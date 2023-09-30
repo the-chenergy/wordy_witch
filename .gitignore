@@ -1,0 +1,7 @@
+__pycache__
+*.dSYM
+out
+
+.DS_Store
+*.o
+*.out
