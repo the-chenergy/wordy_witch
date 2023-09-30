@@ -1,0 +1,13 @@
+name: wordy-witch
+
+channels:
+  - defaults
+
+dependencies:
+  - python=3.11
+  - ipykernel
+  - yapf
+  - numpy
+  - scipy
+  - matplotlib
+  - pandas
