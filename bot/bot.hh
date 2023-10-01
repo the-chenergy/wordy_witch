@@ -8,6 +8,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <numeric>
 #include <optional>
 #include <string>
 #include <utility>
@@ -211,25 +212,44 @@ struct Group {
   int words[MAX_BANK_SIZE];
 };
 
-void group_guesses(Group (&out_groups)[NUM_VERDICTS], const Bank& bank,
+struct Grouping {
+  int num_groups_with_targets;
+  int largest_group_num_targets;
+  double entropy;
+  Group groups[NUM_VERDICTS];
+};
+
+void group_guesses(Grouping& out_grouping, const Bank& bank,
                    const Group& prev_group, int prev_guess) {
-  for (Group& g : out_groups) {
+  for (Group& g : out_grouping.groups) {
     g.num_words = 0;
     g.num_targets = 0;
   }
   for (int i = 0; i < prev_group.num_targets; i++) {
-    Group& group = out_groups[bank.verdicts[prev_guess][prev_group.words[i]]];
-    group.words[group.num_words] = prev_group.words[i];
+    int candidate = prev_group.words[i];
+    int verdict = bank.verdicts[prev_guess][candidate];
+    Group& group = out_grouping.groups[verdict];
+    group.words[group.num_words] = candidate;
     group.num_words++;
     group.num_targets++;
   }
+  out_grouping.num_groups_with_targets = 0;
+  out_grouping.largest_group_num_targets = 0;
+  out_grouping.entropy = 0;
   for (int prev_verdict = 0; prev_verdict < NUM_VERDICTS; prev_verdict++) {
-    Group& group = out_groups[prev_verdict];
+    Group& group = out_grouping.groups[prev_verdict];
     if (group.num_targets == 0) {
       continue;
     }
+    out_grouping.num_groups_with_targets++;
+    out_grouping.largest_group_num_targets =
+        std::max(out_grouping.largest_group_num_targets, group.num_targets);
+    double group_probability = 1.0 * group.num_targets / prev_group.num_targets;
+    out_grouping.entropy += -std::log2(group_probability) * group_probability;
+
     for (int i = 0; i < prev_group.num_words; i++) {
-      int candidate_verdict = bank.verdicts[prev_guess][prev_group.words[i]];
+      int candidate = prev_group.words[i];
+      int candidate_verdict = bank.verdicts[prev_guess][candidate];
       if (i < prev_group.num_targets && candidate_verdict == prev_verdict) {
         continue;
       }
@@ -237,11 +257,13 @@ void group_guesses(Group (&out_groups)[NUM_VERDICTS], const Bank& bank,
                                           [candidate_verdict]) {
         continue;
       }
-      group.words[group.num_words] = prev_group.words[i];
+      group.words[group.num_words] = candidate;
       group.num_words++;
     }
   }
 }
+
+static constexpr int ALL_GREEN_VERDICT = NUM_VERDICTS - 1;
 
 std::pair<int, std::optional<int>> find_best_guess(const Bank& bank,
                                                    int num_attempts,
@@ -249,18 +271,22 @@ std::pair<int, std::optional<int>> find_best_guess(const Bank& bank,
                                                    int cost_so_far);
 
 int evaluate_guess(
-    const Bank& bank, int num_attempts, const Group (&groups)[NUM_VERDICTS],
+    const Bank& bank, int num_attempts, const Grouping& grouping,
     int cost_so_far,
     std::function<void(int verdict, const Group& group,
                        std::optional<int> best_guess, int best_guess_cost)>
         callback_for_group) {
   int total_cost = 0;
-  if (groups[NUM_VERDICTS - 1].num_targets > 0) {
+  if (grouping.groups[ALL_GREEN_VERDICT].num_targets > 0) {
     total_cost += cost_so_far;
   }
-  for (int verdict = 0; verdict < NUM_VERDICTS - 1; verdict++) {
-    const Group& group = groups[verdict];
-    if (group.num_targets == 0) {
+
+  for (int verdict = NUM_VERDICTS - 1; verdict >= 0; verdict--) {
+    if (verdict == ALL_GREEN_VERDICT) {
+      continue;
+    }
+    const Group& group = grouping.groups[verdict];
+    if (grouping.groups[verdict].num_targets == 0) {
       continue;
     }
     auto [best_cost, best_next_guess] =
@@ -296,15 +322,15 @@ std::pair<int, std::optional<int>> find_best_guess(const Bank& bank,
     return {(cost_so_far + 1) + (cost_so_far + 2), guessable.words[0]};
   }
 
-  static Group preallocated_groups_by_attempt[MAX_NUM_ATTEMPTS][NUM_VERDICTS];
-  auto& groups = preallocated_groups_by_attempt[num_attempts - 1];
+  static Grouping preallocated_grouping_by_attempt[MAX_NUM_ATTEMPTS];
+  Grouping& grouping = preallocated_grouping_by_attempt[num_attempts - 1];
 
   std::pair<int, std::optional<int>> best = {COST_INFINITY, {}};
   for (int i = 0; i < guessable.num_words; i++) {
     int guess = guessable.words[i];
-    group_guesses(groups, bank, guessable, guess);
+    group_guesses(grouping, bank, guessable, guess);
     int guess_cost =
-        evaluate_guess(bank, num_attempts - 1, groups, cost_so_far + 1, {});
+        evaluate_guess(bank, num_attempts - 1, grouping, cost_so_far + 1, {});
     if (guess_cost < best.first) {
       best = {guess_cost, guess};
     }
