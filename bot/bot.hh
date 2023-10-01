@@ -325,9 +325,31 @@ std::pair<int, std::optional<int>> find_best_guess(const Bank& bank,
   static Grouping preallocated_grouping_by_attempt[MAX_NUM_ATTEMPTS];
   Grouping& grouping = preallocated_grouping_by_attempt[num_attempts - 1];
 
-  std::pair<int, std::optional<int>> best = {COST_INFINITY, {}};
+  static std::pair<double, int>
+      preallocated_entropies_and_guesses_by_attempt[MAX_NUM_ATTEMPTS]
+                                                   [MAX_BANK_SIZE];
+  auto& entropies_and_guesses =
+      preallocated_entropies_and_guesses_by_attempt[num_attempts - 1];
+  constexpr int MAX_NUM_CANDIDATES_TO_CONSIDER = 32;
   for (int i = 0; i < guessable.num_words; i++) {
     int guess = guessable.words[i];
+    group_guesses(grouping, bank, guessable, guess);
+    entropies_and_guesses[i] = {grouping.entropy, guess};
+  }
+  if (guessable.num_words > MAX_NUM_CANDIDATES_TO_CONSIDER) {
+    std::nth_element(
+        entropies_and_guesses,
+        entropies_and_guesses + MAX_NUM_CANDIDATES_TO_CONSIDER,
+        entropies_and_guesses + guessable.num_words,
+        [](std::pair<double, int> a, std::pair<double, int> b) -> bool {
+          return a.first > b.first;
+        });
+  }
+
+  std::pair<int, std::optional<int>> best = {COST_INFINITY, {}};
+  for (int i = 0;
+       i < std::min(guessable.num_words, MAX_NUM_CANDIDATES_TO_CONSIDER); i++) {
+    auto [entropy, guess] = entropies_and_guesses[i];
     group_guesses(grouping, bank, guessable, guess);
     int guess_cost =
         evaluate_guess(bank, num_attempts - 1, grouping, cost_so_far + 1, {});
