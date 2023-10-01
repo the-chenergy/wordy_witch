@@ -29,7 +29,7 @@ void print_timestamp() {
   auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(current_time -
                                                                   start_time);
   std::cerr << "(" << std::setprecision(3) << std::fixed << ms.count() / 1000.0
-            << "s) " << std::defaultfloat;
+            << "s) " << std::setprecision(6) << std::defaultfloat;
 }
 
 /*

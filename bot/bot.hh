@@ -6,13 +6,17 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <optional>
 #include <string>
+#include <utility>
 
 #include "log.hh"
 
 namespace wordy_witch {
+
+#pragma region precomputing
 
 constexpr int WORD_SIZE = 5;
 
@@ -95,7 +99,7 @@ struct Bank {
   /* `verdict[guess][target]` => `judge(guess, target)` */
   uint8_t verdicts[MAX_BANK_SIZE][MAX_BANK_SIZE];
   /*
-    `hard_mode_valid_candidates[prev_guess][candidate_guess_verdict][prev_verdict]`
+    `hard_mode_valid_candidates[prev_guess][prev_verdict][candidate_guess_verdict]`
     => under hard mode, whether some candidate word with verdict
     `judge(prev_guess, candidate_word)` may be used as the next guess if
     prev_verdict (i.e. `judge(prev_guess, target)`) was given
@@ -162,13 +166,12 @@ void load_bank(Bank& out_bank, std::filesystem::path dict_path,
         out_bank.verdicts[i][j] = verdict;
         sample_next_guesses[verdict] = j;
       }
-      for (int candidate_verdict = 0; candidate_verdict < NUM_VERDICTS;
-           candidate_verdict++) {
-        if (!sample_next_guesses[candidate_verdict].has_value()) {
+      for (int prev_verdict = 0; prev_verdict < NUM_VERDICTS; prev_verdict++) {
+        if (!sample_next_guesses[prev_verdict].has_value()) {
           continue;
         }
-        for (int prev_verdict = 0; prev_verdict < NUM_VERDICTS;
-             prev_verdict++) {
+        for (int candidate_verdict = 0; candidate_verdict < NUM_VERDICTS;
+             candidate_verdict++) {
           if (!sample_next_guesses[candidate_verdict].has_value()) {
             continue;
           }
@@ -177,7 +180,7 @@ void load_bank(Bank& out_bank, std::filesystem::path dict_path,
           int valid = check_is_hard_mode_valid(out_bank.words[i], prev_verdict,
                                                candidate_guess);
           out_bank
-              .hard_mode_valid_candidates[i][candidate_verdict][prev_verdict] =
+              .hard_mode_valid_candidates[i][prev_verdict][candidate_verdict] =
               valid;
         }
       }
@@ -194,5 +197,121 @@ std::optional<int> find_word(const Bank& bank, std::string word) {
   }
   return {};
 }
+
+#pragma endregion
+
+#pragma region playing
+
+constexpr int MAX_NUM_ATTEMPTS = 6;
+constexpr int COST_INFINITY = 1 << 18;
+
+struct Group {
+  int num_words;
+  int num_targets;
+  int words[MAX_BANK_SIZE];
+};
+
+void group_guesses(Group (&out_groups)[NUM_VERDICTS], const Bank& bank,
+                   const Group& prev_group, int prev_guess) {
+  for (Group& g : out_groups) {
+    g.num_words = 0;
+    g.num_targets = 0;
+  }
+  for (int i = 0; i < prev_group.num_targets; i++) {
+    Group& group = out_groups[bank.verdicts[prev_guess][prev_group.words[i]]];
+    group.words[group.num_words] = prev_group.words[i];
+    group.num_words++;
+    group.num_targets++;
+  }
+  for (int prev_verdict = 0; prev_verdict < NUM_VERDICTS; prev_verdict++) {
+    Group& group = out_groups[prev_verdict];
+    if (group.num_targets == 0) {
+      continue;
+    }
+    for (int i = 0; i < prev_group.num_words; i++) {
+      int candidate_verdict = bank.verdicts[prev_guess][prev_group.words[i]];
+      if (i < prev_group.num_targets && candidate_verdict == prev_verdict) {
+        continue;
+      }
+      if (!bank.hard_mode_valid_candidates[prev_guess][prev_verdict]
+                                          [candidate_verdict]) {
+        continue;
+      }
+      group.words[group.num_words] = prev_group.words[i];
+      group.num_words++;
+    }
+  }
+}
+
+std::pair<int, std::optional<int>> find_best_guess(const Bank& bank,
+                                                   int num_attempts,
+                                                   const Group& guessable,
+                                                   int cost_so_far);
+
+int evaluate_guess(
+    const Bank& bank, int num_attempts, const Group (&groups)[NUM_VERDICTS],
+    int cost_so_far,
+    std::function<void(int verdict, const Group& group,
+                       std::optional<int> best_guess, int best_guess_cost)>
+        callback_for_group) {
+  int total_cost = 0;
+  if (groups[NUM_VERDICTS - 1].num_targets > 0) {
+    total_cost += cost_so_far;
+  }
+  for (int verdict = 0; verdict < NUM_VERDICTS - 1; verdict++) {
+    const Group& group = groups[verdict];
+    if (group.num_targets == 0) {
+      continue;
+    }
+    auto [best_cost, best_next_guess] =
+        find_best_guess(bank, num_attempts, group, cost_so_far);
+    if (callback_for_group) {
+      callback_for_group(verdict, group, best_next_guess, best_cost);
+    }
+    if (best_cost >= COST_INFINITY || !best_next_guess.has_value()) {
+      return COST_INFINITY;
+    }
+    total_cost += best_cost;
+  }
+  return total_cost;
+}
+
+std::pair<int, std::optional<int>> find_best_guess(const Bank& bank,
+                                                   int num_attempts,
+                                                   const Group& guessable,
+                                                   int cost_so_far) {
+  if (num_attempts <= 0) {
+    return {COST_INFINITY, {}};
+  }
+  if (guessable.num_targets == 1) {
+    return {cost_so_far + 1, guessable.words[0]};
+  }
+  if (num_attempts == 1) {
+    if (guessable.num_targets > 1) {
+      return {COST_INFINITY, {}};
+    }
+    return {cost_so_far + 1, guessable.words[0]};
+  }
+  if (guessable.num_targets == 2) {
+    return {(cost_so_far + 1) + (cost_so_far + 2), guessable.words[0]};
+  }
+
+  static Group preallocated_groups_by_attempt[MAX_NUM_ATTEMPTS][NUM_VERDICTS];
+  auto& groups = preallocated_groups_by_attempt[num_attempts - 1];
+
+  std::pair<int, std::optional<int>> best = {COST_INFINITY, {}};
+  for (int i = 0; i < guessable.num_words; i++) {
+    int guess = guessable.words[i];
+    group_guesses(groups, bank, guessable, guess);
+    int guess_cost =
+        evaluate_guess(bank, num_attempts - 1, groups, cost_so_far + 1, {});
+    if (guess_cost < best.first) {
+      best = {guess_cost, guess};
+    }
+  }
+  return best;
+}
+
+#pragma endregion
 
 }  // namespace wordy_witch

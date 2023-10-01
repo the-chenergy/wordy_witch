@@ -1,24 +1,31 @@
 #include <iostream>
+#include <numeric>
 
 #include "bot.hh"
+#include "log.hh"
 
 int main() {
   static wordy_witch::Bank bank;
   wordy_witch::load_bank(bank, "../bank/co_wordle",
-                         wordy_witch::BankGuessesInclusion::ALL_WORDS);
+                         wordy_witch::BankGuessesInclusion::COMMON_WORDS);
 
-  std::cerr << bank.words[0] << " " << bank.words[bank.num_targets] << " "
-            << bank.num_words << " " << bank.num_targets << std::endl;
-  int a = wordy_witch::find_word(bank, "sneer").value();
-  int b = wordy_witch::find_word(bank, "screw").value();
-  std::cerr << bank.words[a] << " " << bank.words[b] << " "
-            << wordy_witch::format_verdict(bank.verdicts[a][b]) << " "
-            << wordy_witch::format_verdict(bank.verdicts[b][a]) << std::endl;
-  for (int v = 0; v < wordy_witch::NUM_VERDICTS; v++) {
-    std::cerr << v << " " << bank.words[a] << " " << bank.words[b] << " "
-              << wordy_witch::format_verdict(v) << " "
-              << bank.hard_mode_valid_candidates[a][bank.verdicts[a][b]][v] << " "
-              << bank.hard_mode_valid_candidates[b][bank.verdicts[b][a]][v]
-              << "\n";
-  }
+  static wordy_witch::Group initial_group;
+  initial_group.num_words = bank.num_words;
+  initial_group.num_targets = bank.num_targets;
+  std::iota(initial_group.words, initial_group.words + initial_group.num_words,
+            0);
+  static wordy_witch::Group groups[wordy_witch::NUM_VERDICTS];
+  wordy_witch::group_guesses(groups, bank, initial_group,
+                             wordy_witch::find_word(bank, "least").value());
+  int cost = wordy_witch::evaluate_guess(
+      bank, 2, groups, 1,
+      [](int verdict, const wordy_witch::Group &group,
+         std::optional<int> best_guess, int best_guess_cost) -> void {
+        int best_guess_index = best_guess.has_value() ? best_guess.value() : 0;
+        WORDY_WITCH_TRACE(wordy_witch::format_verdict(verdict), group.num_words,
+                          group.num_targets, bank.words[best_guess_index],
+                          best_guess_cost,
+                          best_guess_cost * 1.0 / group.num_targets);
+      });
+  WORDY_WITCH_TRACE(cost, cost * 1.0 / initial_group.num_targets);
 }
