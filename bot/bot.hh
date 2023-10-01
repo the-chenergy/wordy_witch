@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <bit>
 #include <bitset>
 #include <cstdint>
 #include <filesystem>
@@ -8,6 +9,8 @@
 #include <iostream>
 #include <optional>
 #include <string>
+
+#include "log.hh"
 
 namespace wordy_witch {
 
@@ -150,6 +153,9 @@ void load_bank(Bank& out_bank, std::filesystem::path dict_path,
 
   const auto precompute_judge_data = [&out_bank]() -> void {
     for (int i = 0; i < out_bank.num_words; i++) {
+      if (std::popcount(static_cast<unsigned>(i)) == 1) {
+        WORDY_WITCH_TRACE("Precomputing judge data", i, out_bank.num_words);
+      }
       std::optional<int> sample_next_guesses[NUM_VERDICTS] = {};
       for (int j = 0; j < out_bank.num_words; j++) {
         int verdict = judge(out_bank.words[i], out_bank.words[j]);
