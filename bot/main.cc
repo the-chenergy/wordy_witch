@@ -8,19 +8,25 @@
 int main() {
   static wordy_witch::Bank bank;
   wordy_witch::load_bank(bank, "../bank/co_wordle",
-                         wordy_witch::BankGuessesInclusion::COMMON_WORDS);
+                         wordy_witch::BankGuessesInclusion::ALL_WORDS);
 
   static wordy_witch::Group initial_group = {};
-  std::vector<int> words = {
-      wordy_witch::find_word(bank, "baste").value(),
-      wordy_witch::find_word(bank, "caste").value(),
-      wordy_witch::find_word(bank, "haste").value(),
-      wordy_witch::find_word(bank, "paste").value(),
-      wordy_witch::find_word(bank, "taste").value(),
-      wordy_witch::find_word(bank, "waste").value(),
+  std::vector<int> words;
+  // words = {
+  //     wordy_witch::find_word(bank, "baste").value(),
+  //     wordy_witch::find_word(bank, "caste").value(),
+  //     wordy_witch::find_word(bank, "haste").value(),
+  //     wordy_witch::find_word(bank, "paste").value(),
+  //     wordy_witch::find_word(bank, "taste").value(),
+  //     wordy_witch::find_word(bank, "waste").value(),
 
-      wordy_witch::find_word(bank, "tapes").value(),
-  };
+  //     wordy_witch::find_word(bank, "tapes").value(),
+  // };
+  for (int i = 0; i < bank.num_words; i++) {
+    if (bank.words[i][0] == 'n') {
+      words.push_back(i);
+    }
+  }
   for (int i = 0; i < words.size(); i++) {
     std::cerr << bank.words[words[i]] << " ";
     initial_group.words[i] = words[i];
