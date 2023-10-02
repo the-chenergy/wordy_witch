@@ -76,19 +76,6 @@ int main() {
                   << bank.words[best_guess_index] << "\t" << group.num_words
                   << "\t" << group.num_targets << "\t"
                   << best_guess_cost * 1.0 / group.num_targets;
-        if (0) {
-          std::cout << "\t";
-          static wordy_witch::Grouping temp_grouping;
-          for (int i = 0; i < group.num_words; i++) {
-            if (i == group.num_targets) {
-              std::cout << "(non-targets) ";
-            }
-            wordy_witch::group_guesses(temp_grouping, bank, group,
-                                       group.words[i]);
-            std::cout << bank.words[group.words[i]] << "("
-                      << temp_grouping.entropy << ") ";
-          }
-        }
         std::cout << std::endl;
       });
   WORDY_WITCH_TRACE(cost, cost * 1.0 / initial_group.num_targets);

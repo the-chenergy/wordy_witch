@@ -212,10 +212,14 @@ struct Group {
   int words[MAX_BANK_SIZE];
 };
 
-struct Grouping {
+struct GroupingHeuristic {
   int num_groups_with_targets;
   int largest_group_num_targets;
   double entropy;
+};
+
+struct Grouping {
+  GroupingHeuristic heuristic;
   Group groups[NUM_VERDICTS];
 };
 
@@ -233,19 +237,20 @@ void group_guesses(Grouping& out_grouping, const Bank& bank,
     group.num_words++;
     group.num_targets++;
   }
-  out_grouping.num_groups_with_targets = 0;
-  out_grouping.largest_group_num_targets = 0;
-  out_grouping.entropy = 0;
+  GroupingHeuristic& heuristic = out_grouping.heuristic;
+  heuristic.num_groups_with_targets = 0;
+  heuristic.largest_group_num_targets = 0;
+  heuristic.entropy = 0;
   for (int prev_verdict = 0; prev_verdict < NUM_VERDICTS; prev_verdict++) {
     Group& group = out_grouping.groups[prev_verdict];
     if (group.num_targets == 0) {
       continue;
     }
-    out_grouping.num_groups_with_targets++;
-    out_grouping.largest_group_num_targets =
-        std::max(out_grouping.largest_group_num_targets, group.num_targets);
+    heuristic.num_groups_with_targets++;
+    heuristic.largest_group_num_targets =
+        std::max(heuristic.largest_group_num_targets, group.num_targets);
     double group_probability = 1.0 * group.num_targets / prev_group.num_targets;
-    out_grouping.entropy += -std::log2(group_probability) * group_probability;
+    heuristic.entropy += -std::log2(group_probability) * group_probability;
 
     for (int i = 0; i < prev_group.num_words; i++) {
       int candidate = prev_group.words[i];
@@ -325,31 +330,38 @@ std::pair<int, std::optional<int>> find_best_guess(const Bank& bank,
   static Grouping preallocated_grouping_by_attempt[MAX_NUM_ATTEMPTS];
   Grouping& grouping = preallocated_grouping_by_attempt[num_attempts - 1];
 
-  static std::pair<double, int>
-      preallocated_entropies_and_guesses_by_attempt[MAX_NUM_ATTEMPTS]
-                                                   [MAX_BANK_SIZE];
-  auto& entropies_and_guesses =
-      preallocated_entropies_and_guesses_by_attempt[num_attempts - 1];
-  constexpr int MAX_NUM_CANDIDATES_TO_CONSIDER = 32;
+  using GuessHeuristic = std::pair<int, GroupingHeuristic>;
+  static GuessHeuristic
+      preallocated_guesses_heuristics_by_attempt[MAX_NUM_ATTEMPTS]
+                                                [MAX_BANK_SIZE];
+  auto& guesses_and_heuristics =
+      preallocated_guesses_heuristics_by_attempt[num_attempts - 1];
+  double max_guess_entropy = 0;
   for (int i = 0; i < guessable.num_words; i++) {
     int guess = guessable.words[i];
     group_guesses(grouping, bank, guessable, guess);
-    entropies_and_guesses[i] = {grouping.entropy, guess};
+    guesses_and_heuristics[i] = {guess, grouping.heuristic};
+    max_guess_entropy = std::max(max_guess_entropy, grouping.heuristic.entropy);
   }
+  constexpr int MAX_NUM_CANDIDATES_TO_CONSIDER = 28;
+  constexpr double MAX_ENTROPY_DIFFERENCE_TO_CONSIDER = 0.5;
   if (guessable.num_words > MAX_NUM_CANDIDATES_TO_CONSIDER) {
-    std::nth_element(
-        entropies_and_guesses,
-        entropies_and_guesses + MAX_NUM_CANDIDATES_TO_CONSIDER,
-        entropies_and_guesses + guessable.num_words,
-        [](std::pair<double, int> a, std::pair<double, int> b) -> bool {
-          return a.first > b.first;
-        });
+    std::nth_element(guesses_and_heuristics,
+                     guesses_and_heuristics + MAX_NUM_CANDIDATES_TO_CONSIDER,
+                     guesses_and_heuristics + guessable.num_words,
+                     [](GuessHeuristic a, GuessHeuristic b) -> bool {
+                       return a.second.entropy > b.second.entropy;
+                     });
   }
 
   std::pair<int, std::optional<int>> best = {COST_INFINITY, {}};
   for (int i = 0;
        i < std::min(guessable.num_words, MAX_NUM_CANDIDATES_TO_CONSIDER); i++) {
-    auto [entropy, guess] = entropies_and_guesses[i];
+    auto [guess, heuristic] = guesses_and_heuristics[i];
+    if (heuristic.entropy <
+        max_guess_entropy - MAX_ENTROPY_DIFFERENCE_TO_CONSIDER) {
+      continue;
+    }
     group_guesses(grouping, bank, guessable, guess);
     int guess_cost =
         evaluate_guess(bank, num_attempts - 1, grouping, cost_so_far + 1, {});
