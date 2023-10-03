@@ -215,14 +215,9 @@ struct Group {
   int num_words;
   int num_targets;
   int words[MAX_BANK_SIZE];
-  std::optional<GroupHash> hash;
 };
 
-void hash_group(Group& group) {
-  if (group.hash.has_value()) {
-    return;
-  }
-
+GroupHash hash_group(const Group& group) {
   static constexpr uint64_t MOD[] = {
       (1ULL << 63) - 25, (1ULL << 63) - 165,
       // (1ULL << 63) - 259,
@@ -240,17 +235,17 @@ void hash_group(Group& group) {
     return 0;
   }();
 
-  group.hash = {{}};
-  group.hash.value().fill(0);
+  GroupHash hash = {};
   for (int i = 0; i < group.num_words; i++) {
     for (int m = 0; m < NUM_CODES_IN_GROUP_HASH; m++) {
       bool is_word_target = i < group.num_targets;
       int encoded_word_index =
           group.words[i] + (is_word_target ? MAX_BANK_SIZE : 0);
-      group.hash.value()[m] += pow_2_mod[encoded_word_index][m];
-      group.hash.value()[m] %= MOD[m];
+      hash[m] += pow_2_mod[encoded_word_index][m];
+      hash[m] %= MOD[m];
     }
   }
+  return hash;
 }
 
 struct GroupingHeuristic {
@@ -269,7 +264,6 @@ void group_guesses(Grouping& out_grouping, const Bank& bank,
   for (Group& g : out_grouping.groups) {
     g.num_words = 0;
     g.num_targets = 0;
-    g.hash = {};
   }
   for (int i = 0; i < prev_group.num_targets; i++) {
     int candidate = prev_group.words[i];
@@ -318,18 +312,18 @@ struct BestGuessInfo {
 };
 
 BestGuessInfo find_best_guess(const Bank& bank, int num_attempts,
-                              Group& guessable);
+                              const Group& guessable);
 
-int evaluate_guess(
-    const Bank& bank, int num_attempts, Grouping& grouping,
-    std::function<void(int verdict, Group& group, BestGuessInfo best_guess)>
-        callback_for_group) {
+int evaluate_guess(const Bank& bank, int num_attempts, const Grouping& grouping,
+                   std::function<void(int verdict, const Group& group,
+                                      BestGuessInfo best_guess)>
+                       callback_for_group) {
   int total_cost = 0;
   for (int verdict = NUM_VERDICTS - 1; verdict >= 0; verdict--) {
     if (verdict == ALL_GREEN_VERDICT) {
       continue;
     }
-    Group& group = grouping.groups[verdict];
+    const Group& group = grouping.groups[verdict];
     if (grouping.groups[verdict].num_targets == 0) {
       continue;
     }
@@ -358,7 +352,7 @@ static std::unordered_map<GroupHash, BestGuessInfo, GroupHashUnorderedMapHasher>
     find_best_guess_cache[MAX_NUM_ATTEMPTS];
 
 BestGuessInfo find_best_guess(const Bank& bank, int num_attempts,
-                              Group& guessable) {
+                              const Group& guessable) {
   assert(num_attempts > 0);
   if (guessable.num_targets == 1) {
     return BestGuessInfo{.guess = guessable.words[0], .cost = 1};
@@ -370,9 +364,9 @@ BestGuessInfo find_best_guess(const Bank& bank, int num_attempts,
     return BestGuessInfo{.guess = guessable.words[0], .cost = 1 + 2};
   }
 
-  hash_group(guessable);
+  GroupHash guessable_hash = hash_group(guessable);
   auto& cache = find_best_guess_cache[num_attempts - 1];
-  if (auto it = cache.find(guessable.hash.value()); it != cache.end()) {
+  if (auto it = cache.find(guessable_hash); it != cache.end()) {
     return it->second;
   }
 
@@ -392,8 +386,8 @@ BestGuessInfo find_best_guess(const Bank& bank, int num_attempts,
     guesses_and_heuristics[i] = {guess, grouping.heuristic};
     max_guess_entropy = std::max(max_guess_entropy, grouping.heuristic.entropy);
   }
-  constexpr int MAX_NUM_CANDIDATES_TO_CONSIDER = 32;
-  constexpr double MAX_ENTROPY_DIFFERENCE_TO_CONSIDER = 1;
+  constexpr int MAX_NUM_CANDIDATES_TO_CONSIDER = 24;
+  constexpr double MAX_ENTROPY_DIFFERENCE_TO_CONSIDER = 0.5;
   if (guessable.num_words > MAX_NUM_CANDIDATES_TO_CONSIDER) {
     std::nth_element(guesses_and_heuristics,
                      guesses_and_heuristics + MAX_NUM_CANDIDATES_TO_CONSIDER,
@@ -420,7 +414,7 @@ BestGuessInfo find_best_guess(const Bank& bank, int num_attempts,
     }
   }
 
-  cache[guessable.hash.value()] = best_guess;
+  cache[guessable_hash] = best_guess;
   return best_guess;
 }
 
