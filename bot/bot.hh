@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <bit>
 #include <bitset>
+#include <cassert>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -11,7 +12,6 @@
 #include <numeric>
 #include <optional>
 #include <string>
-#include <utility>
 
 #include "log.hh"
 
@@ -270,22 +270,19 @@ void group_guesses(Grouping& out_grouping, const Bank& bank,
 
 static constexpr int ALL_GREEN_VERDICT = NUM_VERDICTS - 1;
 
-std::pair<int, std::optional<int>> find_best_guess(const Bank& bank,
-                                                   int num_attempts,
-                                                   const Group& guessable,
-                                                   int cost_so_far);
+struct BestGuessInfo {
+  int guess;
+  int cost;
+};
 
-int evaluate_guess(
-    const Bank& bank, int num_attempts, const Grouping& grouping,
-    int cost_so_far,
-    std::function<void(int verdict, const Group& group,
-                       std::optional<int> best_guess, int best_guess_cost)>
-        callback_for_group) {
+BestGuessInfo find_best_guess(const Bank& bank, int num_attempts,
+                              const Group& guessable);
+
+int evaluate_guess(const Bank& bank, int num_attempts, const Grouping& grouping,
+                   std::function<void(int verdict, const Group& group,
+                                      BestGuessInfo best_guess)>
+                       callback_for_group) {
   int total_cost = 0;
-  if (grouping.groups[ALL_GREEN_VERDICT].num_targets > 0) {
-    total_cost += cost_so_far;
-  }
-
   for (int verdict = NUM_VERDICTS - 1; verdict >= 0; verdict--) {
     if (verdict == ALL_GREEN_VERDICT) {
       continue;
@@ -294,37 +291,29 @@ int evaluate_guess(
     if (grouping.groups[verdict].num_targets == 0) {
       continue;
     }
-    auto [best_cost, best_next_guess] =
-        find_best_guess(bank, num_attempts, group, cost_so_far);
+    BestGuessInfo best_guess = find_best_guess(bank, num_attempts, group);
     if (callback_for_group) {
-      callback_for_group(verdict, group, best_next_guess, best_cost);
+      callback_for_group(verdict, group, best_guess);
     }
-    if (best_cost >= COST_INFINITY || !best_next_guess.has_value()) {
+    if (best_guess.cost >= COST_INFINITY) {
       return COST_INFINITY;
     }
-    total_cost += best_cost;
+    total_cost += best_guess.cost;
   }
   return total_cost;
 }
 
-std::pair<int, std::optional<int>> find_best_guess(const Bank& bank,
-                                                   int num_attempts,
-                                                   const Group& guessable,
-                                                   int cost_so_far) {
-  if (num_attempts <= 0) {
-    return {COST_INFINITY, {}};
-  }
+BestGuessInfo find_best_guess(const Bank& bank, int num_attempts,
+                              const Group& guessable) {
+  assert(num_attempts > 0);
   if (guessable.num_targets == 1) {
-    return {cost_so_far + 1, guessable.words[0]};
+    return BestGuessInfo{.guess = guessable.words[0], .cost = 1};
   }
   if (num_attempts == 1) {
-    if (guessable.num_targets > 1) {
-      return {COST_INFINITY, {}};
-    }
-    return {cost_so_far + 1, guessable.words[0]};
+    return BestGuessInfo{.guess = guessable.words[0], .cost = COST_INFINITY};
   }
   if (guessable.num_targets == 2) {
-    return {(cost_so_far + 1) + (cost_so_far + 2), guessable.words[0]};
+    return BestGuessInfo{.guess = guessable.words[0], .cost = 1 + 2};
   }
 
   static Grouping preallocated_grouping_by_attempt[MAX_NUM_ATTEMPTS];
@@ -354,7 +343,8 @@ std::pair<int, std::optional<int>> find_best_guess(const Bank& bank,
                      });
   }
 
-  std::pair<int, std::optional<int>> best = {COST_INFINITY, {}};
+  BestGuessInfo best_guess = {.guess = guessable.words[0],
+                              .cost = COST_INFINITY};
   for (int i = 0;
        i < std::min(guessable.num_words, MAX_NUM_CANDIDATES_TO_CONSIDER); i++) {
     auto [guess, heuristic] = guesses_and_heuristics[i];
@@ -363,13 +353,13 @@ std::pair<int, std::optional<int>> find_best_guess(const Bank& bank,
       continue;
     }
     group_guesses(grouping, bank, guessable, guess);
-    int guess_cost =
-        evaluate_guess(bank, num_attempts - 1, grouping, cost_so_far + 1, {});
-    if (guess_cost < best.first) {
-      best = {guess_cost, guess};
+    int cost = evaluate_guess(bank, num_attempts - 1, grouping, {}) +
+               guessable.num_targets;
+    if (cost < best_guess.cost) {
+      best_guess = BestGuessInfo{.guess = guess, .cost = cost};
     }
   }
-  return best;
+  return best_guess;
 }
 
 #pragma endregion

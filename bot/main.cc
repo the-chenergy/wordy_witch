@@ -63,19 +63,18 @@ int main() {
   // std::exit(1);
 
   int cost = wordy_witch::evaluate_guess(
-      bank, 5, grouping, 1,
+      bank, 5, grouping,
       [&opener](int verdict, const wordy_witch::Group& group,
-                std::optional<int> best_guess, int best_guess_cost) -> void {
-        int best_guess_index = best_guess.has_value() ? best_guess.value() : 0;
+                wordy_witch::BestGuessInfo best_guess) -> void {
         WORDY_WITCH_TRACE(wordy_witch::format_verdict(verdict), group.num_words,
-                          group.num_targets, bank.words[best_guess_index],
-                          best_guess_cost,
-                          best_guess_cost * 1.0 / group.num_targets);
+                          group.num_targets, bank.words[best_guess.guess],
+                          best_guess.cost,
+                          best_guess.cost * 1.0 / group.num_targets);
         std::cout << bank.words[opener] << "\t"
                   << wordy_witch::format_verdict(verdict) << "\t"
-                  << bank.words[best_guess_index] << "\t" << group.num_words
+                  << bank.words[best_guess.guess] << "\t" << group.num_words
                   << "\t" << group.num_targets << "\t"
-                  << best_guess_cost * 1.0 / group.num_targets;
+                  << best_guess.cost * 1.0 / group.num_targets;
         std::cout << std::endl;
       });
   WORDY_WITCH_TRACE(cost, cost * 1.0 / initial_group.num_targets);
