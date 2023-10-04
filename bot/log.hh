@@ -21,7 +21,8 @@ void trace(const char* l, const T& x, const A&... a) {
 }
 
 static std::chrono::steady_clock::time_point start_time;
-static const auto init_start_time = []() -> int {
+
+static const auto initialize_logger = []() -> int {
   start_time = std::chrono::steady_clock::now();
   return 0;
 }();
@@ -31,7 +32,7 @@ void print_timestamp() {
   auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(current_time -
                                                                   start_time);
   std::cerr << "(" << std::setprecision(3) << std::fixed << ms.count() / 1000.0
-            << "s) " << std::setprecision(6) << std::defaultfloat;
+            << "s) " << std::setprecision(4) << std::defaultfloat;
 }
 
 /*

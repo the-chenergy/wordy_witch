@@ -1,4 +1,5 @@
 #include <cstdlib>
+#include <iomanip>
 #include <iostream>
 #include <vector>
 
@@ -73,10 +74,24 @@ int main() {
         std::cout << bank.words[opener] << "\t"
                   << wordy_witch::format_verdict(verdict) << "\t"
                   << bank.words[best_guess.guess] << "\t" << group.num_words
-                  << "\t" << group.num_targets << "\t"
-                  << best_guess.cost * 1.0 / group.num_targets;
+                  << "\t" << group.num_targets << "\t" << std::setprecision(3)
+                  << std::fixed << best_guess.cost * 1.0 / group.num_targets;
+
+        static wordy_witch::Grouping attempt_2_grouping;
+        wordy_witch::group_guesses(attempt_2_grouping, bank, group,
+                                   best_guess.guess);
+        std::cout << "\t"
+                  << attempt_2_grouping.heuristic.num_groups_with_targets
+                  << "\t"
+                  << attempt_2_grouping.heuristic.largest_group_num_targets
+                  << "\t" << attempt_2_grouping.heuristic.entropy;
+
         std::cout << std::endl;
       });
   WORDY_WITCH_TRACE(cost, cost * 1.0 / initial_group.num_targets);
-  std::cout << cost * 1.0 / initial_group.num_targets << std::endl;
+  std::cout << cost * 1.0 / initial_group.num_targets << "\t" << cost << "\t"
+            << initial_group.num_targets << "\t"
+            << grouping.heuristic.num_groups_with_targets << "\t"
+            << grouping.heuristic.largest_group_num_targets << "\t"
+            << grouping.heuristic.entropy << std::endl;
 }

@@ -7,6 +7,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstdint>
+#include <ext/pb_ds/assoc_container.hpp>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -14,6 +15,7 @@
 #include <numeric>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 
 #include "log.hh"
@@ -209,45 +211,11 @@ std::optional<int> find_word(const Bank& bank, std::string word) {
 constexpr int MAX_NUM_ATTEMPTS = 6;
 constexpr int COST_INFINITY = 1 << 18;
 
-static constexpr int NUM_CODES_IN_GROUP_HASH = 2;
-using GroupHash = std::array<uint64_t, NUM_CODES_IN_GROUP_HASH>;
-
 struct Group {
   int num_words;
   int num_targets;
   int words[MAX_BANK_SIZE];
 };
-
-GroupHash hash_group(const Group& group) {
-  static constexpr uint64_t MOD[] = {
-      (1ULL << 63) - 25, (1ULL << 63) - 165,
-      // (1ULL << 63) - 259,
-      // (1ULL << 63) - 301,
-  };
-
-  static uint64_t pow_2_mod[MAX_BANK_SIZE * 2][NUM_CODES_IN_GROUP_HASH];
-  static const int compute_pow_2_mod = []() -> int {
-    std::fill_n(pow_2_mod[0], NUM_CODES_IN_GROUP_HASH, 1);
-    for (int i = 1; i < MAX_BANK_SIZE * 2; i++) {
-      for (int m = 0; m < NUM_CODES_IN_GROUP_HASH; m++) {
-        pow_2_mod[i][m] = pow_2_mod[i - 1][m] * 2 % MOD[m];
-      }
-    }
-    return 0;
-  }();
-
-  GroupHash hash = {};
-  for (int i = 0; i < group.num_words; i++) {
-    for (int m = 0; m < NUM_CODES_IN_GROUP_HASH; m++) {
-      bool is_word_target = i < group.num_targets;
-      int encoded_word_index =
-          group.words[i] + (is_word_target ? MAX_BANK_SIZE : 0);
-      hash[m] += pow_2_mod[encoded_word_index][m];
-      hash[m] %= MOD[m];
-    }
-  }
-  return hash;
-}
 
 struct GroupingHeuristic {
   int num_groups_with_targets;
@@ -340,18 +308,6 @@ int evaluate_guess(const Bank& bank, int num_attempts, const Grouping& grouping,
   return total_cost;
 }
 
-struct GroupHashUnorderedMapHasher {
-  uint64_t operator()(GroupHash group_hash) const {
-    uint64_t hash = 0;
-    for (uint64_t code : group_hash) {
-      hash = hash * 31 + code;
-    }
-    return hash;
-  }
-};
-static std::unordered_map<GroupHash, BestGuessInfo, GroupHashUnorderedMapHasher>
-    find_best_guess_cache[MAX_NUM_ATTEMPTS];
-
 BestGuessInfo find_best_guess(const Bank& bank, int num_attempts,
                               const Group& guessable) {
   assert(num_attempts > 0);
@@ -365,8 +321,55 @@ BestGuessInfo find_best_guess(const Bank& bank, int num_attempts,
     return BestGuessInfo{.guess = guessable.words[0], .cost = 1 + 2};
   }
 
+  constexpr int NUM_CODES_IN_GROUP_HASH = 2;
+  using GroupHash = std::array<uint64_t, NUM_CODES_IN_GROUP_HASH>;
+  const auto hash_group = [](const Group& group) {
+    static constexpr uint64_t MOD[] = {
+        (1ULL << 63) - 25, (1ULL << 63) - 165,
+        // (1ULL << 63) - 259,
+        // (1ULL << 63) - 301,
+    };
+
+    static uint64_t pow_2_mod[MAX_BANK_SIZE * 2][NUM_CODES_IN_GROUP_HASH];
+    static const int precompute_pow_2_mod = []() -> int {
+      std::fill_n(pow_2_mod[0], NUM_CODES_IN_GROUP_HASH, 1);
+      for (int i = 1; i < MAX_BANK_SIZE * 2; i++) {
+        for (int m = 0; m < NUM_CODES_IN_GROUP_HASH; m++) {
+          pow_2_mod[i][m] = pow_2_mod[i - 1][m] * 2 % MOD[m];
+        }
+      }
+      return 0;
+    }();
+
+    GroupHash hash = {};
+    for (int i = 0; i < group.num_words; i++) {
+      for (int m = 0; m < NUM_CODES_IN_GROUP_HASH; m++) {
+        bool is_word_target = i < group.num_targets;
+        int encoded_word_index =
+            group.words[i] + (is_word_target ? MAX_BANK_SIZE : 0);
+        hash[m] += pow_2_mod[encoded_word_index][m];
+        hash[m] %= MOD[m];
+      }
+    }
+    return hash;
+  };
+
+  struct GroupHashFindBestGuessCacheHasher {
+    uint64_t operator()(GroupHash group_hash) const {
+      uint64_t combined_hash = 0;
+      for (uint64_t code : group_hash) {
+        combined_hash = combined_hash * 31 + code;
+      }
+      return combined_hash;
+    }
+  };
+  using FindBestGuessCache =
+      __gnu_pbds::gp_hash_table<GroupHash, BestGuessInfo,
+                                GroupHashFindBestGuessCacheHasher>;
+  static FindBestGuessCache find_best_guess_cache_by_attempt[MAX_NUM_ATTEMPTS];
   GroupHash guessable_hash = hash_group(guessable);
-  auto& cache = find_best_guess_cache[num_attempts - 1];
+  FindBestGuessCache& cache =
+      find_best_guess_cache_by_attempt[num_attempts - 1];
   if (auto it = cache.find(guessable_hash); it != cache.end()) {
     return it->second;
   }
@@ -374,8 +377,11 @@ BestGuessInfo find_best_guess(const Bank& bank, int num_attempts,
   static Grouping preallocated_grouping_by_attempt[MAX_NUM_ATTEMPTS];
   Grouping& grouping = preallocated_grouping_by_attempt[num_attempts - 1];
 
-  using GuessHeuristic = std::pair<int, GroupingHeuristic>;
-  static GuessHeuristic
+  struct CandidateHeuristic {
+    int guess;
+    GroupingHeuristic heuristic;
+  };
+  static CandidateHeuristic
       preallocated_guesses_heuristics_by_attempt[MAX_NUM_ATTEMPTS]
                                                 [MAX_BANK_SIZE];
   auto& guesses_and_heuristics =
@@ -384,34 +390,37 @@ BestGuessInfo find_best_guess(const Bank& bank, int num_attempts,
   for (int i = 0; i < guessable.num_words; i++) {
     int guess = guessable.words[i];
     group_guesses(grouping, bank, guessable, guess);
-    guesses_and_heuristics[i] = {guess, grouping.heuristic};
+    guesses_and_heuristics[i] = {.guess = guess,
+                                 .heuristic = grouping.heuristic};
     max_guess_entropy = std::max(max_guess_entropy, grouping.heuristic.entropy);
   }
-  constexpr int MAX_NUM_CANDIDATES_TO_CONSIDER = 24;
-  constexpr double MAX_ENTROPY_DIFFERENCE_TO_CONSIDER = 0.5;
+  constexpr int MAX_NUM_CANDIDATES_TO_CONSIDER = 32;
+  constexpr double MAX_ENTROPY_DIFFERENCE_TO_CONSIDER = 1;
   if (guessable.num_words > MAX_NUM_CANDIDATES_TO_CONSIDER) {
-    std::nth_element(guesses_and_heuristics,
-                     guesses_and_heuristics + MAX_NUM_CANDIDATES_TO_CONSIDER,
-                     guesses_and_heuristics + guessable.num_words,
-                     [](GuessHeuristic a, GuessHeuristic b) -> bool {
-                       return a.second.entropy > b.second.entropy;
-                     });
+    std::nth_element(
+        guesses_and_heuristics,
+        guesses_and_heuristics + MAX_NUM_CANDIDATES_TO_CONSIDER,
+        guesses_and_heuristics + guessable.num_words,
+        [](const CandidateHeuristic& a, const CandidateHeuristic& b) -> bool {
+          return std::tuple{-a.heuristic.entropy, a.guess} <
+                 std::tuple{-b.heuristic.entropy, b.guess};
+        });
   }
 
   BestGuessInfo best_guess = {.guess = guessable.words[0],
                               .cost = COST_INFINITY};
   for (int i = 0;
        i < std::min(guessable.num_words, MAX_NUM_CANDIDATES_TO_CONSIDER); i++) {
-    auto [guess, heuristic] = guesses_and_heuristics[i];
-    if (heuristic.entropy <
+    CandidateHeuristic candidate = guesses_and_heuristics[i];
+    if (candidate.heuristic.entropy <
         max_guess_entropy - MAX_ENTROPY_DIFFERENCE_TO_CONSIDER) {
       continue;
     }
-    group_guesses(grouping, bank, guessable, guess);
+    group_guesses(grouping, bank, guessable, candidate.guess);
     int cost = evaluate_guess(bank, num_attempts - 1, grouping, {}) +
                guessable.num_targets;
     if (cost < best_guess.cost) {
-      best_guess = BestGuessInfo{.guess = guess, .cost = cost};
+      best_guess = BestGuessInfo{.guess = candidate.guess, .cost = cost};
     }
   }
 
