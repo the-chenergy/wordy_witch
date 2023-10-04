@@ -323,12 +323,8 @@ BestGuessInfo find_best_guess(const Bank& bank, int num_attempts,
 
   constexpr int NUM_CODES_IN_GROUP_HASH = 2;
   using GroupHash = std::array<uint64_t, NUM_CODES_IN_GROUP_HASH>;
-  const auto hash_group = [](const Group& group) {
-    static constexpr uint64_t MOD[] = {
-        (1ULL << 63) - 25, (1ULL << 63) - 165,
-        // (1ULL << 63) - 259,
-        // (1ULL << 63) - 301,
-    };
+  const auto hash_group = [](const Group& group) -> GroupHash {
+    static constexpr uint64_t MOD[] = {(1ULL << 63) - 25, (1ULL << 63) - 165};
 
     static uint64_t pow_2_mod[MAX_BANK_SIZE * 2][NUM_CODES_IN_GROUP_HASH];
     static const int precompute_pow_2_mod = []() -> int {
@@ -377,50 +373,87 @@ BestGuessInfo find_best_guess(const Bank& bank, int num_attempts,
   static Grouping preallocated_grouping_by_attempt[MAX_NUM_ATTEMPTS];
   Grouping& grouping = preallocated_grouping_by_attempt[num_attempts - 1];
 
-  struct CandidateHeuristic {
-    int guess;
-    GroupingHeuristic heuristic;
+  const auto prune_candidates = [num_attempts, &bank, &guessable, &grouping](
+                                    int& out_num_candidates,
+                                    int* out_candidates) -> void {
+    constexpr int MAX_ENTROPY_PLACE_TO_CONSIDER_BY_ATTEMPT[] = {
+        0, 8, 16, 32, 32,
+    };
+    constexpr double MAX_ENTROPY_DIFFERENCE_TO_CONSIDER_BY_ATTEMPT[] = {
+        0, 0.25, 0.5, 1, 1,
+    };
+    const int max_entropy_place =
+        MAX_ENTROPY_PLACE_TO_CONSIDER_BY_ATTEMPT[num_attempts - 1];
+    const double max_entropy_difference =
+        MAX_ENTROPY_DIFFERENCE_TO_CONSIDER_BY_ATTEMPT[num_attempts - 1];
+    if (guessable.num_words <= max_entropy_place) {
+      out_num_candidates = guessable.num_words;
+      std::copy_n(guessable.words, out_num_candidates, out_candidates);
+      return;
+    }
+
+    struct CandidateHeuristic {
+      int candidate;
+      bool is_candidate_target;
+      GroupingHeuristic heuristic;
+    };
+    const auto candidate_heuristic_greater =
+        [&guessable](const CandidateHeuristic& a,
+                     const CandidateHeuristic& b) -> bool {
+      return std::tuple{a.heuristic.entropy, a.is_candidate_target} >
+             std::tuple{b.heuristic.entropy, b.is_candidate_target};
+    };
+
+    static CandidateHeuristic candidate_heuristics[MAX_BANK_SIZE];
+    double max_candidate_entropy = 0;
+    for (int i = 0; i < guessable.num_words; i++) {
+      int candidate = guessable.words[i];
+      group_guesses(grouping, bank, guessable, candidate);
+      candidate_heuristics[i] = {
+          .candidate = candidate,
+          .is_candidate_target = candidate < guessable.num_targets,
+          .heuristic = grouping.heuristic,
+      };
+      max_candidate_entropy =
+          std::max(max_candidate_entropy, grouping.heuristic.entropy);
+    }
+    std::nth_element(candidate_heuristics,
+                     candidate_heuristics + max_entropy_place,
+                     candidate_heuristics + guessable.num_words,
+                     candidate_heuristic_greater);
+    const CandidateHeuristic& cutting_point =
+        candidate_heuristics[max_entropy_place - 1];
+
+    out_num_candidates = 0;
+    for (int i = 0; i < guessable.num_words; i++) {
+      const CandidateHeuristic& ch = candidate_heuristics[i];
+      if (candidate_heuristic_greater(cutting_point, ch)) {
+        continue;
+      }
+      if (ch.heuristic.entropy <
+          max_candidate_entropy - max_entropy_difference) {
+        continue;
+      }
+      out_candidates[out_num_candidates] = ch.candidate;
+      out_num_candidates++;
+    }
   };
-  static CandidateHeuristic
-      preallocated_guesses_heuristics_by_attempt[MAX_NUM_ATTEMPTS]
-                                                [MAX_BANK_SIZE];
-  auto& guesses_and_heuristics =
-      preallocated_guesses_heuristics_by_attempt[num_attempts - 1];
-  double max_guess_entropy = 0;
-  for (int i = 0; i < guessable.num_words; i++) {
-    int guess = guessable.words[i];
-    group_guesses(grouping, bank, guessable, guess);
-    guesses_and_heuristics[i] = {.guess = guess,
-                                 .heuristic = grouping.heuristic};
-    max_guess_entropy = std::max(max_guess_entropy, grouping.heuristic.entropy);
-  }
-  constexpr int MAX_NUM_CANDIDATES_TO_CONSIDER = 32;
-  constexpr double MAX_ENTROPY_DIFFERENCE_TO_CONSIDER = 1;
-  if (guessable.num_words > MAX_NUM_CANDIDATES_TO_CONSIDER) {
-    std::nth_element(
-        guesses_and_heuristics,
-        guesses_and_heuristics + MAX_NUM_CANDIDATES_TO_CONSIDER,
-        guesses_and_heuristics + guessable.num_words,
-        [](const CandidateHeuristic& a, const CandidateHeuristic& b) -> bool {
-          return std::tuple{-a.heuristic.entropy, a.guess} <
-                 std::tuple{-b.heuristic.entropy, b.guess};
-        });
-  }
+
+  static int preallocated_candidates_by_attempt[MAX_NUM_ATTEMPTS]
+                                               [MAX_BANK_SIZE];
+  int* candidates = preallocated_candidates_by_attempt[num_attempts - 1];
+  int num_candidates_to_consider;
+  prune_candidates(num_candidates_to_consider, candidates);
 
   BestGuessInfo best_guess = {.guess = guessable.words[0],
                               .cost = COST_INFINITY};
-  for (int i = 0;
-       i < std::min(guessable.num_words, MAX_NUM_CANDIDATES_TO_CONSIDER); i++) {
-    CandidateHeuristic candidate = guesses_and_heuristics[i];
-    if (candidate.heuristic.entropy <
-        max_guess_entropy - MAX_ENTROPY_DIFFERENCE_TO_CONSIDER) {
-      continue;
-    }
-    group_guesses(grouping, bank, guessable, candidate.guess);
+  for (int i = 0; i < num_candidates_to_consider; i++) {
+    int candidate = candidates[i];
+    group_guesses(grouping, bank, guessable, candidate);
     int cost = evaluate_guess(bank, num_attempts - 1, grouping, {}) +
                guessable.num_targets;
     if (cost < best_guess.cost) {
-      best_guess = BestGuessInfo{.guess = candidate.guess, .cost = cost};
+      best_guess = BestGuessInfo{.guess = candidate, .cost = cost};
     }
   }
 

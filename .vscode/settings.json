@@ -1,5 +1,5 @@
 {
-  "cSpell.words": ["dordle", "endregion", "wordle"],
+  "cSpell.words": ["dordle", "endregion", "pbds", "wordle"],
   "code-runner.executorMapByGlob": {
     "*.cc|*.hh": "true $dir; g++-13 -Ofast -funroll-loops -std=c++20 *.cc && ./a.out | tee output/temp.txt"
   }
