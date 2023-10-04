@@ -288,7 +288,8 @@ int evaluate_guess(const Bank& bank, int num_attempts, const Grouping& grouping,
                                       BestGuessInfo best_guess)>
                        callback_for_group) {
   int total_cost = 0;
-  for (int verdict = NUM_VERDICTS - 1; verdict >= 0; verdict--) {
+  for (int verdict = 0; verdict < NUM_VERDICTS; verdict++) {
+    // for (int verdict = NUM_VERDICTS - 1; verdict >= 0; verdict--) {
     if (verdict == ALL_GREEN_VERDICT) {
       continue;
     }
@@ -380,17 +381,12 @@ BestGuessInfo find_best_guess(const Bank& bank, int num_attempts,
         0, 8, 16, 32, 32,
     };
     constexpr double MAX_ENTROPY_DIFFERENCE_TO_CONSIDER_BY_ATTEMPT[] = {
-        0, 0.25, 0.5, 1, 1,
+        0, 0.25, 0.5, 0.75, 0.75,
     };
     const int max_entropy_place =
         MAX_ENTROPY_PLACE_TO_CONSIDER_BY_ATTEMPT[num_attempts - 1];
     const double max_entropy_difference =
         MAX_ENTROPY_DIFFERENCE_TO_CONSIDER_BY_ATTEMPT[num_attempts - 1];
-    if (guessable.num_words <= max_entropy_place) {
-      out_num_candidates = guessable.num_words;
-      std::copy_n(guessable.words, out_num_candidates, out_candidates);
-      return;
-    }
 
     struct CandidateHeuristic {
       int candidate;
@@ -417,21 +413,22 @@ BestGuessInfo find_best_guess(const Bank& bank, int num_attempts,
       max_candidate_entropy =
           std::max(max_candidate_entropy, grouping.heuristic.entropy);
     }
-    std::nth_element(candidate_heuristics,
-                     candidate_heuristics + max_entropy_place,
-                     candidate_heuristics + guessable.num_words,
-                     candidate_heuristic_greater);
-    const CandidateHeuristic& cutting_point =
-        candidate_heuristics[max_entropy_place - 1];
+    double min_entropy_to_consider =
+        max_candidate_entropy - max_entropy_difference;
+    if (guessable.num_words > max_entropy_place) {
+      std::nth_element(candidate_heuristics,
+                       candidate_heuristics + max_entropy_place,
+                       candidate_heuristics + guessable.num_words,
+                       candidate_heuristic_greater);
+      min_entropy_to_consider = std::max(
+          min_entropy_to_consider,
+          candidate_heuristics[max_entropy_place - 1].heuristic.entropy);
+    }
 
     out_num_candidates = 0;
     for (int i = 0; i < guessable.num_words; i++) {
       const CandidateHeuristic& ch = candidate_heuristics[i];
-      if (candidate_heuristic_greater(cutting_point, ch)) {
-        continue;
-      }
-      if (ch.heuristic.entropy <
-          max_candidate_entropy - max_entropy_difference) {
+      if (ch.heuristic.entropy < min_entropy_to_consider) {
         continue;
       }
       out_candidates[out_num_candidates] = ch.candidate;
