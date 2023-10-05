@@ -12,9 +12,8 @@ int main() {
   wordy_witch::load_bank(bank, "../bank/co_wordle",
                          wordy_witch::BankGuessesInclusion::ALL_WORDS);
   std::vector<std::string> state = {
-      "least",
-      "-----",
-      // "mount",
+      "LEAST", "-----",
+      // "CRUMP",
   };
 
   const auto populate_group_with_full_bank =

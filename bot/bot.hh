@@ -5,6 +5,7 @@
 #include <bit>
 #include <bitset>
 #include <cassert>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <ext/pb_ds/assoc_container.hpp>
@@ -16,7 +17,6 @@
 #include <optional>
 #include <string>
 #include <tuple>
-#include <unordered_map>
 
 #include "log.hh"
 
@@ -160,6 +160,15 @@ void load_bank(Bank& out_bank, std::filesystem::path dict_path,
     }
   };
   read_bank();
+
+  const auto transform_bank_words_to_upper = [&out_bank]() -> void {
+    for (int i = 0; i < out_bank.num_words; i++) {
+      for (int j = 0; j < WORD_SIZE; j++) {
+        out_bank.words[i][j] = std::toupper(out_bank.words[i][j]);
+      }
+    }
+  };
+  transform_bank_words_to_upper();
 
   const auto precompute_judge_data = [&out_bank]() -> void {
     for (int i = 0; i < out_bank.num_words; i++) {
