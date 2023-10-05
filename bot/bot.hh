@@ -209,7 +209,6 @@ std::optional<int> find_word(const Bank& bank, std::string word) {
 #pragma region playing
 
 constexpr int MAX_NUM_ATTEMPTS = 6;
-constexpr int COST_INFINITY = 1 << 18;
 
 struct Group {
   int num_words;
@@ -275,14 +274,18 @@ void group_guesses(Grouping& out_grouping, const Bank& bank,
 
 static constexpr int ALL_GREEN_VERDICT = NUM_VERDICTS - 1;
 
+using Cost = double;
+
+constexpr Cost INFINITE_COST = std::numeric_limits<Cost>::max();
+
 struct BestGuessInfo {
   int guess_candidate_index;
   int guess;
-  int cost;
+  Cost cost;
 };
 
 using FindBestGuessCallbackForCandidate =
-    std::function<void(int candidate_index, int candidate, int cost)>;
+    std::function<void(int candidate_index, int candidate, Cost cost)>;
 
 BestGuessInfo find_best_guess(
     const Bank& bank, int num_attempts, const Group& guessable,
@@ -291,8 +294,9 @@ BestGuessInfo find_best_guess(
 using EvaluateGuessCallbackForGroup = std::function<void(
     int verdict, const Group& group, BestGuessInfo best_guess)>;
 
-int evaluate_guess(const Bank& bank, int num_attempts, const Grouping& grouping,
-                   EvaluateGuessCallbackForGroup callback_for_group) {
+Cost evaluate_guess(const Bank& bank, int num_attempts,
+                    const Grouping& grouping,
+                    EvaluateGuessCallbackForGroup callback_for_group) {
   int total_cost = 0;
   for (int verdict = NUM_VERDICTS - 1; verdict >= 0; verdict--) {
     if (verdict == ALL_GREEN_VERDICT) {
@@ -306,8 +310,8 @@ int evaluate_guess(const Bank& bank, int num_attempts, const Grouping& grouping,
     if (callback_for_group) {
       callback_for_group(verdict, group, best_guess);
     }
-    if (best_guess.cost >= COST_INFINITY) {
-      return COST_INFINITY;
+    if (best_guess.cost >= INFINITE_COST) {
+      return INFINITE_COST;
     }
     total_cost += best_guess.cost;
   }
@@ -322,7 +326,7 @@ BestGuessInfo find_best_guess(
     return BestGuessInfo{.guess = guessable.words[0], .cost = 1};
   }
   if (num_attempts == 1) {
-    return BestGuessInfo{.guess = guessable.words[0], .cost = COST_INFINITY};
+    return BestGuessInfo{.guess = guessable.words[0], .cost = INFINITE_COST};
   }
   if (guessable.num_targets == 2) {
     return BestGuessInfo{.guess = guessable.words[0], .cost = 1 + 2};
@@ -441,12 +445,12 @@ BestGuessInfo find_best_guess(
   prune_candidates(num_candidates_to_consider, candidates);
 
   BestGuessInfo best_guess = {.guess = guessable.words[0],
-                              .cost = COST_INFINITY};
+                              .cost = INFINITE_COST};
   for (int i = 0; i < num_candidates_to_consider; i++) {
     int candidate = candidates[i];
     group_guesses(grouping, bank, guessable, candidate);
-    int cost = evaluate_guess(bank, num_attempts - 1, grouping, {}) +
-               guessable.num_targets;
+    Cost cost = evaluate_guess(bank, num_attempts - 1, grouping, {}) +
+                guessable.num_targets;
     if (callback_for_candidate) {
       callback_for_candidate(i, candidate, cost);
     }
