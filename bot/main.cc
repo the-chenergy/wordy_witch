@@ -105,7 +105,7 @@ int main() {
     std::cout << "Best guess in the input board state: "
               << bank.words[best_guess.guess]
               << " (CID: " << best_guess.guess_candidate_index
-              << ", GL:" << group.num_words << ", TL: " << group.num_targets
+              << ", GL: " << group.num_words << ", TL: " << group.num_targets
               << ", Cost: " << best_guess.cost
               << ", EA: " << best_guess.cost * 1.0 / group.num_targets << ")"
               << std::endl;
@@ -168,7 +168,7 @@ int main() {
               << ", NVG: " << grouping.heuristic.num_groups_with_targets
               << ", LVG: " << grouping.heuristic.largest_group_num_targets
               << ") produces a mean of " << cost * 1.0 / group.num_targets
-              << " attempts per Wordle game (GL:" << group.num_words
+              << " attempts per Wordle game (GL: " << group.num_words
               << ", TL: " << group.num_targets << ", Cost: " << cost << ")"
               << std::endl;
   };

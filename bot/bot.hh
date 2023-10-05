@@ -120,8 +120,12 @@ enum struct BankGuessesInclusion : int {
   ALL_WORDS,
 };
 
+static void clear_bank_specific_caches();
+
 void load_bank(Bank& out_bank, std::filesystem::path dict_path,
                BankGuessesInclusion guesses_inclusion) {
+  clear_bank_specific_caches();
+
   const auto read_bank = [&out_bank, dict_path, guesses_inclusion]() -> void {
     out_bank.num_words = 0;
     out_bank.num_targets = 0;
@@ -238,9 +242,9 @@ struct Grouping {
 
 void group_guesses(Grouping& out_grouping, const Bank& bank,
                    const Group& prev_group, int prev_guess) {
-  for (Group& g : out_grouping.groups) {
-    g.num_words = 0;
-    g.num_targets = 0;
+  for (Group& group : out_grouping.groups) {
+    group.num_words = 0;
+    group.num_targets = 0;
   }
   for (int i = 0; i < prev_group.num_targets; i++) {
     int candidate = prev_group.words[i];
@@ -327,6 +331,57 @@ Cost evaluate_guess(const Bank& bank, int num_attempts,
   return total_cost;
 }
 
+static constexpr int NUM_CODES_IN_GROUP_HASH = 2;
+
+namespace {
+
+using GroupHash = std::array<uint64_t, NUM_CODES_IN_GROUP_HASH>;
+
+struct GroupHashFindBestGuessCacheHasher {
+  uint64_t operator()(GroupHash group_hash) const {
+    uint64_t combined_hash = 0;
+    for (uint64_t code : group_hash) {
+      combined_hash = combined_hash * 31 + code;
+    }
+    return combined_hash;
+  }
+};
+
+using FindBestGuessCache =
+    __gnu_pbds::gp_hash_table<GroupHash, BestGuessInfo,
+                              GroupHashFindBestGuessCacheHasher>;
+
+}  // namespace
+
+static GroupHash hash_group(const Group& group) {
+  static constexpr uint64_t MOD[] = {(1ULL << 63) - 25, (1ULL << 63) - 165};
+
+  static uint64_t pow_2_mod[MAX_BANK_SIZE * 2][NUM_CODES_IN_GROUP_HASH];
+  static const int precompute_pow_2_mod = []() -> int {
+    std::fill_n(pow_2_mod[0], NUM_CODES_IN_GROUP_HASH, 1);
+    for (int i = 1; i < MAX_BANK_SIZE * 2; i++) {
+      for (int m = 0; m < NUM_CODES_IN_GROUP_HASH; m++) {
+        pow_2_mod[i][m] = pow_2_mod[i - 1][m] * 2 % MOD[m];
+      }
+    }
+    return 0;
+  }();
+
+  GroupHash hash = {};
+  for (int i = 0; i < group.num_words; i++) {
+    for (int m = 0; m < NUM_CODES_IN_GROUP_HASH; m++) {
+      bool is_word_target = i < group.num_targets;
+      int encoded_word_index =
+          group.words[i] + (is_word_target ? MAX_BANK_SIZE : 0);
+      hash[m] += pow_2_mod[encoded_word_index][m];
+      hash[m] %= MOD[m];
+    }
+  }
+  return hash;
+};
+
+static FindBestGuessCache find_best_guess_cache_by_attempt[MAX_NUM_ATTEMPTS];
+
 BestGuessInfo find_best_guess(
     const Bank& bank, int num_attempts, const Group& guessable,
     FindBestGuessCallbackForCandidate callback_for_candidate) {
@@ -341,48 +396,6 @@ BestGuessInfo find_best_guess(
     return BestGuessInfo{.guess = guessable.words[0], .cost = 1 + 2};
   }
 
-  constexpr int NUM_CODES_IN_GROUP_HASH = 2;
-  using GroupHash = std::array<uint64_t, NUM_CODES_IN_GROUP_HASH>;
-  const auto hash_group = [](const Group& group) -> GroupHash {
-    static constexpr uint64_t MOD[] = {(1ULL << 63) - 25, (1ULL << 63) - 165};
-
-    static uint64_t pow_2_mod[MAX_BANK_SIZE * 2][NUM_CODES_IN_GROUP_HASH];
-    static const int precompute_pow_2_mod = []() -> int {
-      std::fill_n(pow_2_mod[0], NUM_CODES_IN_GROUP_HASH, 1);
-      for (int i = 1; i < MAX_BANK_SIZE * 2; i++) {
-        for (int m = 0; m < NUM_CODES_IN_GROUP_HASH; m++) {
-          pow_2_mod[i][m] = pow_2_mod[i - 1][m] * 2 % MOD[m];
-        }
-      }
-      return 0;
-    }();
-
-    GroupHash hash = {};
-    for (int i = 0; i < group.num_words; i++) {
-      for (int m = 0; m < NUM_CODES_IN_GROUP_HASH; m++) {
-        bool is_word_target = i < group.num_targets;
-        int encoded_word_index =
-            group.words[i] + (is_word_target ? MAX_BANK_SIZE : 0);
-        hash[m] += pow_2_mod[encoded_word_index][m];
-        hash[m] %= MOD[m];
-      }
-    }
-    return hash;
-  };
-
-  struct GroupHashFindBestGuessCacheHasher {
-    uint64_t operator()(GroupHash group_hash) const {
-      uint64_t combined_hash = 0;
-      for (uint64_t code : group_hash) {
-        combined_hash = combined_hash * 31 + code;
-      }
-      return combined_hash;
-    }
-  };
-  using FindBestGuessCache =
-      __gnu_pbds::gp_hash_table<GroupHash, BestGuessInfo,
-                                GroupHashFindBestGuessCacheHasher>;
-  static FindBestGuessCache find_best_guess_cache_by_attempt[MAX_NUM_ATTEMPTS];
   GroupHash guessable_hash = hash_group(guessable);
   FindBestGuessCache& cache =
       find_best_guess_cache_by_attempt[num_attempts - 1];
@@ -474,6 +487,12 @@ BestGuessInfo find_best_guess(
 
   cache[guessable_hash] = best_guess;
   return best_guess;
+}
+
+static void clear_bank_specific_caches() {
+  for (FindBestGuessCache& cache : find_best_guess_cache_by_attempt) {
+    cache = {};
+  }
 }
 
 #pragma endregion
