@@ -381,23 +381,9 @@ BestGuessInfo find_best_guess(const Bank& bank, int num_attempts,
     constexpr int MAX_ENTROPY_PLACE_TO_CONSIDER = 127;
     constexpr double MAX_ENTROPY_DIFFERENCE_TO_CONSIDER = 1;
 
-    using GroupSizesHash = uint64_t;
-    const auto hash_group_sizes =
-        [](const Grouping& grouping) -> GroupSizesHash {
-      constexpr GroupSizesHash BASE = 16411;
-      constexpr GroupSizesHash MOD = 1124047533587807;
-      GroupSizesHash hash = 0;
-      for (int verdict = 0; verdict < NUM_VERDICTS; verdict++) {
-        int group_size = grouping.groups[verdict].num_targets;
-        hash = (hash * BASE + group_size) % MOD;
-      }
-      return hash;
-    };
-
     struct CandidateHeuristic {
       int candidate;
       bool is_candidate_target;
-      GroupSizesHash group_sizes_hash;
       GroupingHeuristic heuristic;
     };
     static CandidateHeuristic candidate_heuristics[MAX_BANK_SIZE];
@@ -409,7 +395,6 @@ BestGuessInfo find_best_guess(const Bank& bank, int num_attempts,
       candidate_heuristics[i] = {
           .candidate = candidate,
           .is_candidate_target = candidate < guessable.num_targets,
-          .group_sizes_hash = hash_group_sizes(grouping),
           .heuristic = grouping.heuristic,
       };
       max_candidate_entropy =
@@ -433,16 +418,10 @@ BestGuessInfo find_best_guess(const Bank& bank, int num_attempts,
           std::max(min_entropy_to_consider, cutting_point->heuristic.entropy);
     }
 
-    __gnu_pbds::gp_hash_table<GroupSizesHash, __gnu_pbds::null_type>
-        used_group_sizes;
     out_num_candidates = 0;
     for (int i = 0; i < guessable.num_words; i++) {
       const CandidateHeuristic& ch = candidate_heuristics[i];
       if (ch.heuristic.entropy < min_entropy_to_consider) {
-        continue;
-      }
-      if (bool inserted = used_group_sizes.insert(ch.group_sizes_hash).second;
-          !inserted) {
         continue;
       }
       out_candidates[out_num_candidates] = ch.candidate;
