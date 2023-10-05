@@ -12,7 +12,8 @@ int main() {
   wordy_witch::load_bank(bank, "../bank/co_wordle",
                          wordy_witch::BankGuessesInclusion::ALL_WORDS);
   std::vector<std::string> state = {
-      "LEAST", "-----",
+      "LEAST",
+      // "-----",
       // "CRUMP",
   };
 
@@ -59,8 +60,7 @@ int main() {
   };
   display_initial_message_and_parse_state(group, grouping, state);
 
-  const auto find_and_display_best_guess =
-      [](int num_attempts, const wordy_witch::Group& group) -> void {
+  const auto find_and_display_best_guess = [&state]() -> void {
     std::cout << "Candidate best guesses in this board state:" << std::endl;
     std::cout
         << "(CID: the index of this candidate; only for making looking up "
@@ -85,9 +85,8 @@ int main() {
         << std::endl;
     std::cout << "CID\tGuess\tCost\tEA\tH\tNVG\tLVG" << std::endl;
     wordy_witch::BestGuessInfo best_guess = wordy_witch::find_best_guess(
-        bank, num_attempts, group,
-        [&group](int candidate_index, int candidate,
-                 wordy_witch::Cost cost) -> void {
+        bank, wordy_witch::MAX_NUM_ATTEMPTS - state.size() / 2, group,
+        [](int candidate_index, int candidate, wordy_witch::Cost cost) -> void {
           WORDY_WITCH_TRACE("Analyzed verdict group", candidate, cost);
 
           static wordy_witch::Grouping grouping_after_guess;
@@ -106,14 +105,13 @@ int main() {
     std::cout << "Best guess in the input board state: "
               << bank.words[best_guess.guess]
               << " (CID: " << best_guess.guess_candidate_index
+              << ", GL:" << group.num_words << ", TL: " << group.num_targets
               << ", Cost: " << best_guess.cost
               << ", EA: " << best_guess.cost * 1.0 / group.num_targets << ")"
               << std::endl;
   };
 
-  const auto find_and_display_best_guess_by_verdict =
-      [](int num_attempts, const std::string& last_guess,
-         const wordy_witch::Grouping& grouping) -> void {
+  const auto find_and_display_best_guess_by_verdict = [&state]() -> void {
     std::cout << "Best guesses in this board state for each possible verdict:"
               << std::endl;
     std::cout << "(VID: a base-3 encoded number of this verdict)" << std::endl;
@@ -143,10 +141,9 @@ int main() {
         << std::endl;
     std::cout << "VID\tLG\tV\tNG\tGL\tTL\tCost\tEA\tH\tNVG\tLVG" << std::endl;
     wordy_witch::Cost cost = wordy_witch::evaluate_guess(
-        bank, num_attempts, grouping,
-        [&last_guess, &grouping](
-            int verdict, const wordy_witch::Group& group,
-            wordy_witch::BestGuessInfo best_guess) -> void {
+        bank, wordy_witch::MAX_NUM_ATTEMPTS - 1 - state.size() / 2, grouping,
+        [&state](int verdict, const wordy_witch::Group& group,
+                 wordy_witch::BestGuessInfo best_guess) -> void {
           WORDY_WITCH_TRACE("Analyzed candidate", verdict, best_guess.guess,
                             best_guess.cost);
 
@@ -154,7 +151,7 @@ int main() {
           wordy_witch::group_guesses(grouping_after_guess, bank, group,
                                      best_guess.guess);
 
-          std::cout << verdict << "\t" << last_guess << "\t"
+          std::cout << verdict << "\t" << state.back() << "\t"
                     << wordy_witch::format_verdict(verdict) << "\t"
                     << bank.words[best_guess.guess] << "\t" << group.num_words
                     << "\t" << group.num_targets << "\t" << best_guess.cost
@@ -166,19 +163,19 @@ int main() {
                     << std::endl;
         });
     std::cout << std::endl;
-    std::cout << "Overall, best play after guessing \"" << last_guess
-              << "\" (H: " << grouping.heuristic.entropy
+    std::cout << "Overall, best play after guessing " << state.back()
+              << " (H: " << grouping.heuristic.entropy
               << ", NVG: " << grouping.heuristic.num_groups_with_targets
               << ", LVG: " << grouping.heuristic.largest_group_num_targets
               << ") produces a mean of " << cost * 1.0 / group.num_targets
-              << " attempts per Wordle game (Cost: " << cost << ")"
+              << " attempts per Wordle game (GL:" << group.num_words
+              << ", TL: " << group.num_targets << ", Cost: " << cost << ")"
               << std::endl;
   };
 
   if (state.size() % 2 == 0) {
-    find_and_display_best_guess(6 - state.size() / 2, group);
+    find_and_display_best_guess();
   } else {
-    find_and_display_best_guess_by_verdict(5 - state.size() / 2, state.back(),
-                                           grouping);
+    find_and_display_best_guess_by_verdict();
   }
 }

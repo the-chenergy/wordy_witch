@@ -396,7 +396,7 @@ BestGuessInfo find_best_guess(
   const auto prune_candidates = [num_attempts, &bank, &guessable, &grouping](
                                     int& out_num_candidates,
                                     int* out_candidates) -> void {
-    constexpr int MAX_ENTROPY_PLACE_TO_CONSIDER = 31;
+    constexpr int MAX_ENTROPY_PLACE_TO_CONSIDER = 15;
     constexpr double MAX_ENTROPY_DIFFERENCE_TO_CONSIDER = 1;
 
     struct CandidateHeuristic {
