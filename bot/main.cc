@@ -14,7 +14,7 @@ int main() {
   std::vector<std::string> state = {
       "least",
       "-----",
-      "crump",
+      // "mount",
   };
 
   const auto populate_group_with_full_bank =
@@ -96,7 +96,7 @@ int main() {
                                      candidate);
 
           std::cout << candidate_index << "\t" << bank.words[candidate] << "\t"
-                    << cost << "\t" << cost * 1.0 / group.num_targets << "\t"
+                    << cost << "\t" << cost / group.num_targets << "\t"
                     << grouping_after_guess.heuristic.entropy << "\t"
                     << grouping_after_guess.heuristic.num_groups_with_targets
                     << "\t"
@@ -172,7 +172,8 @@ int main() {
               << ", NVG: " << grouping.heuristic.num_groups_with_targets
               << ", LVG: " << grouping.heuristic.largest_group_num_targets
               << ") produces a mean of " << cost * 1.0 / group.num_targets
-              << " attempts per Wordle game (Cost: " << cost << ")" << std::endl;
+              << " attempts per Wordle game (Cost: " << cost << ")"
+              << std::endl;
   };
 
   if (state.size() % 2 == 0) {

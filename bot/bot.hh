@@ -276,12 +276,12 @@ static constexpr int ALL_GREEN_VERDICT = NUM_VERDICTS - 1;
 
 using Cost = double;
 
-constexpr Cost INFINITE_COST = std::numeric_limits<Cost>::max();
+constexpr Cost INFINITE_COST = std::numeric_limits<Cost>::infinity();
 
 struct BestGuessInfo {
-  int guess_candidate_index;
   int guess;
   Cost cost;
+  int guess_candidate_index;
 };
 
 using FindBestGuessCallbackForCandidate =
@@ -297,7 +297,7 @@ using EvaluateGuessCallbackForGroup = std::function<void(
 Cost evaluate_guess(const Bank& bank, int num_attempts,
                     const Grouping& grouping,
                     EvaluateGuessCallbackForGroup callback_for_group) {
-  int total_cost = 0;
+  Cost total_cost = 0;
   for (int verdict = NUM_VERDICTS - 1; verdict >= 0; verdict--) {
     if (verdict == ALL_GREEN_VERDICT) {
       continue;
@@ -387,7 +387,7 @@ BestGuessInfo find_best_guess(
   const auto prune_candidates = [num_attempts, &bank, &guessable, &grouping](
                                     int& out_num_candidates,
                                     int* out_candidates) -> void {
-    constexpr int MAX_ENTROPY_PLACE_TO_CONSIDER = 15;
+    constexpr int MAX_ENTROPY_PLACE_TO_CONSIDER = 31;
     constexpr double MAX_ENTROPY_DIFFERENCE_TO_CONSIDER = 1;
 
     struct CandidateHeuristic {
@@ -449,16 +449,16 @@ BestGuessInfo find_best_guess(
   for (int i = 0; i < num_candidates_to_consider; i++) {
     int candidate = candidates[i];
     group_guesses(grouping, bank, guessable, candidate);
-    Cost cost = evaluate_guess(bank, num_attempts - 1, grouping, {}) +
-                guessable.num_targets;
+    Cost cost = guessable.num_targets +
+                evaluate_guess(bank, num_attempts - 1, grouping, {});
     if (callback_for_candidate) {
       callback_for_candidate(i, candidate, cost);
     }
     if (cost < best_guess.cost) {
       best_guess = BestGuessInfo{
-          .guess_candidate_index = i,
           .guess = candidate,
           .cost = cost,
+          .guess_candidate_index = i,
       };
     }
   }
