@@ -276,12 +276,17 @@ void group_guesses(Grouping& out_grouping, const Bank& bank,
 static constexpr int ALL_GREEN_VERDICT = NUM_VERDICTS - 1;
 
 struct BestGuessInfo {
+  int guess_candidate_index;
   int guess;
   int cost;
 };
 
-BestGuessInfo find_best_guess(const Bank& bank, int num_attempts,
-                              const Group& guessable);
+using FindBestGuessCallbackForCandidate =
+    std::function<void(int candidate_index, int candidate, int cost)>;
+
+BestGuessInfo find_best_guess(
+    const Bank& bank, int num_attempts, const Group& guessable,
+    FindBestGuessCallbackForCandidate callback_for_candidate);
 
 using EvaluateGuessCallbackForGroup = std::function<void(
     int verdict, const Group& group, BestGuessInfo best_guess)>;
@@ -289,7 +294,6 @@ using EvaluateGuessCallbackForGroup = std::function<void(
 int evaluate_guess(const Bank& bank, int num_attempts, const Grouping& grouping,
                    EvaluateGuessCallbackForGroup callback_for_group) {
   int total_cost = 0;
-  // for (int verdict = 0; verdict < NUM_VERDICTS; verdict++) {
   for (int verdict = NUM_VERDICTS - 1; verdict >= 0; verdict--) {
     if (verdict == ALL_GREEN_VERDICT) {
       continue;
@@ -298,7 +302,7 @@ int evaluate_guess(const Bank& bank, int num_attempts, const Grouping& grouping,
     if (grouping.groups[verdict].num_targets == 0) {
       continue;
     }
-    BestGuessInfo best_guess = find_best_guess(bank, num_attempts, group);
+    BestGuessInfo best_guess = find_best_guess(bank, num_attempts, group, {});
     if (callback_for_group) {
       callback_for_group(verdict, group, best_guess);
     }
@@ -310,8 +314,9 @@ int evaluate_guess(const Bank& bank, int num_attempts, const Grouping& grouping,
   return total_cost;
 }
 
-BestGuessInfo find_best_guess(const Bank& bank, int num_attempts,
-                              const Group& guessable) {
+BestGuessInfo find_best_guess(
+    const Bank& bank, int num_attempts, const Group& guessable,
+    FindBestGuessCallbackForCandidate callback_for_candidate) {
   assert(num_attempts > 0);
   if (guessable.num_targets == 1) {
     return BestGuessInfo{.guess = guessable.words[0], .cost = 1};
@@ -378,7 +383,7 @@ BestGuessInfo find_best_guess(const Bank& bank, int num_attempts,
   const auto prune_candidates = [num_attempts, &bank, &guessable, &grouping](
                                     int& out_num_candidates,
                                     int* out_candidates) -> void {
-    constexpr int MAX_ENTROPY_PLACE_TO_CONSIDER = 127;
+    constexpr int MAX_ENTROPY_PLACE_TO_CONSIDER = 15;
     constexpr double MAX_ENTROPY_DIFFERENCE_TO_CONSIDER = 1;
 
     struct CandidateHeuristic {
@@ -442,8 +447,15 @@ BestGuessInfo find_best_guess(const Bank& bank, int num_attempts,
     group_guesses(grouping, bank, guessable, candidate);
     int cost = evaluate_guess(bank, num_attempts - 1, grouping, {}) +
                guessable.num_targets;
+    if (callback_for_candidate) {
+      callback_for_candidate(i, candidate, cost);
+    }
     if (cost < best_guess.cost) {
-      best_guess = BestGuessInfo{.guess = candidate, .cost = cost};
+      best_guess = BestGuessInfo{
+          .guess_candidate_index = i,
+          .guess = candidate,
+          .cost = cost,
+      };
     }
   }
 
