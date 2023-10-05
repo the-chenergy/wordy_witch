@@ -10,6 +10,7 @@ int main() {
   static wordy_witch::Bank bank;
   wordy_witch::load_bank(bank, "../bank/co_wordle",
                          wordy_witch::BankGuessesInclusion::ALL_WORDS);
+  int opener = wordy_witch::find_word(bank, "least").value();
 
   static wordy_witch::Group initial_group = {};
   std::vector<int> words;
@@ -45,7 +46,6 @@ int main() {
                     bank.words[initial_group.words[0]]);
 
   static wordy_witch::Grouping grouping;
-  int opener = wordy_witch::find_word(bank, "least").value();
   wordy_witch::group_guesses(grouping, bank, initial_group, opener);
   for (int v = 0; v < wordy_witch::NUM_VERDICTS; v++) {
     wordy_witch::Group& g = grouping.groups[v];
@@ -67,9 +67,9 @@ int main() {
       bank, 5, grouping,
       [&opener](int verdict, const wordy_witch::Group& group,
                 wordy_witch::BestGuessInfo best_guess) -> void {
-        WORDY_WITCH_TRACE(wordy_witch::format_verdict(verdict), group.num_words,
-                          group.num_targets, bank.words[best_guess.guess],
-                          best_guess.cost,
+        WORDY_WITCH_TRACE(verdict, wordy_witch::format_verdict(verdict),
+                          group.num_words, group.num_targets,
+                          bank.words[best_guess.guess], best_guess.cost,
                           best_guess.cost * 1.0 / group.num_targets);
         std::cout << bank.words[opener] << "\t"
                   << wordy_witch::format_verdict(verdict) << "\t"
