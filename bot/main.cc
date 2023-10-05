@@ -13,8 +13,6 @@ int main() {
                          wordy_witch::BankGuessesInclusion::ALL_WORDS);
   std::vector<std::string> state = {
       "LEAST",
-      // "-----",
-      // "CRUMP",
   };
 
   const auto populate_group_with_full_bank =

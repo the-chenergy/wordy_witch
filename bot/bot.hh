@@ -241,7 +241,8 @@ struct Grouping {
 };
 
 void group_guesses(Grouping& out_grouping, const Bank& bank,
-                   const Group& prev_group, int prev_guess) {
+                   const Group& prev_group, int prev_guess,
+                   bool targets_only = false) {
   for (Group& group : out_grouping.groups) {
     group.num_words = 0;
     group.num_targets = 0;
@@ -269,6 +270,9 @@ void group_guesses(Grouping& out_grouping, const Bank& bank,
     double group_probability = 1.0 * group.num_targets / prev_group.num_targets;
     heuristic.entropy += -std::log2(group_probability) * group_probability;
 
+    if (targets_only) {
+      continue;
+    }
     for (int i = 0; i < prev_group.num_words; i++) {
       int candidate = prev_group.words[i];
       int candidate_verdict = bank.verdicts[prev_guess][candidate];
@@ -409,8 +413,8 @@ BestGuessInfo find_best_guess(
   const auto prune_candidates = [num_attempts, &bank, &guessable, &grouping](
                                     int& out_num_candidates,
                                     int* out_candidates) -> void {
-    constexpr int MAX_ENTROPY_PLACE_TO_CONSIDER = 15;
-    constexpr double MAX_ENTROPY_DIFFERENCE_TO_CONSIDER = 1;
+    const int MAX_ENTROPY_PLACE_TO_CONSIDER = 32;
+    const double MAX_ENTROPY_DIFFERENCE_TO_CONSIDER = 1;
 
     struct CandidateHeuristic {
       int candidate;
@@ -422,7 +426,7 @@ BestGuessInfo find_best_guess(
     double max_candidate_entropy = 0;
     for (int i = 0; i < guessable.num_words; i++) {
       int candidate = guessable.words[i];
-      group_guesses(grouping, bank, guessable, candidate);
+      group_guesses(grouping, bank, guessable, candidate, true);
       candidate_heuristics[i] = {
           .candidate = candidate,
           .is_candidate_target = candidate < guessable.num_targets,
@@ -441,7 +445,7 @@ BestGuessInfo find_best_guess(
                std::tuple{b.heuristic.entropy, b.is_candidate_target};
       };
       CandidateHeuristic* cutting_point =
-          candidate_heuristics + MAX_ENTROPY_PLACE_TO_CONSIDER;
+          candidate_heuristics + MAX_ENTROPY_PLACE_TO_CONSIDER - 1;
       std::nth_element(candidate_heuristics, cutting_point,
                        candidate_heuristics + guessable.num_words,
                        candidate_heuristic_greater);
