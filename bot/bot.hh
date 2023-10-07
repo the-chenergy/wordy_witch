@@ -8,7 +8,6 @@
 #include <cctype>
 #include <cmath>
 #include <cstdint>
-#include <ext/pb_ds/assoc_container.hpp>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -17,6 +16,7 @@
 #include <optional>
 #include <string>
 #include <tuple>
+#include <unordered_map>
 
 #include "log.hh"
 
@@ -97,7 +97,7 @@ bool check_is_hard_mode_valid(const char* prev_guess, int prev_verdict,
 constexpr int MAX_BANK_SIZE = 1 << 14;
 constexpr int NUM_VERDICTS = 243;
 
-struct Bank {
+struct word_bank {
   char words[MAX_BANK_SIZE][WORD_SIZE + 1];
   int num_words;
   int num_targets;
@@ -114,7 +114,7 @@ struct Bank {
                                                       [NUM_VERDICTS];
 };
 
-enum struct BankGuessesInclusion : int {
+enum struct word_bank_guesses_inclusion : int {
   TARGETS_ONLY,
   COMMON_WORDS,
   ALL_WORDS,
@@ -122,8 +122,8 @@ enum struct BankGuessesInclusion : int {
 
 static void clear_bank_specific_caches();
 
-void load_bank(Bank& out_bank, std::filesystem::path dict_path,
-               BankGuessesInclusion guesses_inclusion) {
+void load_bank(word_bank& out_bank, std::filesystem::path dict_path,
+               word_bank_guesses_inclusion guesses_inclusion) {
   clear_bank_specific_caches();
 
   const auto read_bank = [&out_bank, dict_path, guesses_inclusion]() -> void {
@@ -139,7 +139,7 @@ void load_bank(Bank& out_bank, std::filesystem::path dict_path,
       out_bank.num_targets++;
     }
 
-    if (guesses_inclusion == BankGuessesInclusion::TARGETS_ONLY) {
+    if (guesses_inclusion == word_bank_guesses_inclusion::TARGETS_ONLY) {
       return;
     }
     std::ifstream common_guesses_file(dict_path / "common_guesses.txt");
@@ -151,7 +151,7 @@ void load_bank(Bank& out_bank, std::filesystem::path dict_path,
       out_bank.num_words++;
     }
 
-    if (guesses_inclusion != BankGuessesInclusion::ALL_WORDS) {
+    if (guesses_inclusion != word_bank_guesses_inclusion::ALL_WORDS) {
       return;
     }
     std::ifstream uncommon_guesses_file(dict_path / "uncommon_guesses.txt");
@@ -208,7 +208,7 @@ void load_bank(Bank& out_bank, std::filesystem::path dict_path,
   precompute_judge_data();
 }
 
-std::optional<int> find_word(const Bank& bank, std::string word) {
+std::optional<int> find_word(const word_bank& bank, std::string word) {
   for (int i = 0; i < bank.num_words; i++) {
     if (word == bank.words[i]) {
       return i;
@@ -223,64 +223,41 @@ std::optional<int> find_word(const Bank& bank, std::string word) {
 
 constexpr int MAX_NUM_ATTEMPTS = 6;
 
-struct Group {
+struct word_list {
   int num_words;
   int num_targets;
   int words[MAX_BANK_SIZE];
 };
 
-struct GroupingHeuristic {
-  int num_groups_with_targets;
-  int largest_group_num_targets;
-  double entropy;
-};
+using verdict_groups = word_list[NUM_VERDICTS];
 
-struct Grouping {
-  GroupingHeuristic heuristic;
-  Group groups[NUM_VERDICTS];
-};
-
-void group_guesses(Grouping& out_grouping, const Bank& bank,
-                   const Group& prev_group, int prev_guess,
-                   bool targets_only = false) {
-  for (Group& group : out_grouping.groups) {
+void group_remaining_words(verdict_groups& out_groups, const word_bank& bank,
+                           const word_list& remaining_words, int guess) {
+  for (word_list& group : out_groups) {
     group.num_words = 0;
     group.num_targets = 0;
   }
-  for (int i = 0; i < prev_group.num_targets; i++) {
-    int candidate = prev_group.words[i];
-    int verdict = bank.verdicts[prev_guess][candidate];
-    Group& group = out_grouping.groups[verdict];
+  for (int i = 0; i < remaining_words.num_targets; i++) {
+    int candidate = remaining_words.words[i];
+    int verdict = bank.verdicts[guess][candidate];
+    word_list& group = out_groups[verdict];
     group.words[group.num_words] = candidate;
     group.num_words++;
     group.num_targets++;
   }
-  GroupingHeuristic& heuristic = out_grouping.heuristic;
-  heuristic.num_groups_with_targets = 0;
-  heuristic.largest_group_num_targets = 0;
-  heuristic.entropy = 0;
-  for (int prev_verdict = 0; prev_verdict < NUM_VERDICTS; prev_verdict++) {
-    Group& group = out_grouping.groups[prev_verdict];
+  for (int verdict = 0; verdict < NUM_VERDICTS; verdict++) {
+    word_list& group = out_groups[verdict];
     if (group.num_targets == 0) {
       continue;
     }
-    heuristic.num_groups_with_targets++;
-    heuristic.largest_group_num_targets =
-        std::max(heuristic.largest_group_num_targets, group.num_targets);
-    double group_probability = 1.0 * group.num_targets / prev_group.num_targets;
-    heuristic.entropy += -std::log2(group_probability) * group_probability;
-
-    if (targets_only) {
-      continue;
-    }
-    for (int i = 0; i < prev_group.num_words; i++) {
-      int candidate = prev_group.words[i];
-      int candidate_verdict = bank.verdicts[prev_guess][candidate];
-      if (i < prev_group.num_targets && candidate_verdict == prev_verdict) {
+    for (int i = 0; i < remaining_words.num_words; i++) {
+      int candidate = remaining_words.words[i];
+      int candidate_verdict = bank.verdicts[guess][candidate];
+      if (i < remaining_words.num_targets && candidate_verdict == verdict) {
+        /* This candidate was already added with exact verdict match. */
         continue;
       }
-      if (!bank.hard_mode_valid_candidates[prev_guess][prev_verdict]
-                                          [candidate_verdict]) {
+      if (!bank.hard_mode_valid_candidates[guess][verdict][candidate_verdict]) {
         continue;
       }
       group.words[group.num_words] = candidate;
@@ -291,73 +268,105 @@ void group_guesses(Grouping& out_grouping, const Bank& bank,
 
 static constexpr int ALL_GREEN_VERDICT = NUM_VERDICTS - 1;
 
-using Cost = double;
-
-constexpr Cost INFINITE_COST = std::numeric_limits<Cost>::infinity();
-
-struct BestGuessInfo {
-  int guess;
-  Cost cost;
-  int guess_candidate_index;
+struct performance_info {
+  int total_attempts;
+  bool has_missed_targets;
 };
 
-using FindBestGuessCallbackForCandidate =
-    std::function<void(int candidate_index, int candidate, Cost cost)>;
+struct candidate_info {
+  int guess;
+  performance_info performance;
+};
 
-BestGuessInfo find_best_guess(
-    const Bank& bank, int num_attempts, const Group& guessable,
-    FindBestGuessCallbackForCandidate callback_for_candidate);
+using find_best_guess_callback_for_candidate =
+    std::function<void(candidate_info candidate)>;
 
-using EvaluateGuessCallbackForGroup = std::function<void(
-    int verdict, const Group& group, BestGuessInfo best_guess)>;
+candidate_info find_best_guess(
+    const word_bank& bank, int num_attempts, const word_list& remaining_words,
+    find_best_guess_callback_for_candidate callback_for_candidate);
 
-Cost evaluate_guess(const Bank& bank, int num_attempts,
-                    const Grouping& grouping,
-                    EvaluateGuessCallbackForGroup callback_for_group) {
-  Cost total_cost = 0;
+using evaluate_guess_callback_for_group = std::function<void(
+    int verdict, const word_list& group, candidate_info best_guess)>;
+
+performance_info evaluate_guess(
+    const word_bank& bank, int num_attempts, const word_list& remaining_words,
+    int guess, evaluate_guess_callback_for_group callback_for_group) {
+  performance_info performance = {};
+
+  static verdict_groups preallocated_groups_by_attempt[MAX_NUM_ATTEMPTS];
+  verdict_groups& groups = preallocated_groups_by_attempt[num_attempts - 1];
+  group_remaining_words(groups, bank, remaining_words, guess);
+
   for (int verdict = NUM_VERDICTS - 1; verdict >= 0; verdict--) {
     if (verdict == ALL_GREEN_VERDICT) {
       continue;
     }
-    const Group& group = grouping.groups[verdict];
-    if (grouping.groups[verdict].num_targets == 0) {
+    const word_list& group = groups[verdict];
+    if (groups[verdict].num_targets == 0) {
       continue;
     }
-    BestGuessInfo best_guess = find_best_guess(bank, num_attempts, group, {});
+    candidate_info best_guess = find_best_guess(bank, num_attempts, group, {});
     if (callback_for_group) {
       callback_for_group(verdict, group, best_guess);
     }
-    if (best_guess.cost >= INFINITE_COST) {
-      return INFINITE_COST;
+    if (best_guess.performance.has_missed_targets) {
+      return performance_info{.has_missed_targets = true};
     }
-    total_cost += best_guess.cost;
+    performance.total_attempts += best_guess.performance.total_attempts;
   }
-  return total_cost;
+  return performance;
 }
+
+struct guess_heuristic {
+  int num_verdict_groups_with_targets;
+  int num_targets_in_largest_verdict_group;
+  double entropy;
+};
+
+guess_heuristic compute_guess_heuristic(const word_bank& bank,
+                                        const word_list& remaining_words,
+                                        int guess) {
+  int num_targets_by_verdict[NUM_VERDICTS] = {};
+  for (int i = 0; i < remaining_words.num_targets; i++) {
+    int target = remaining_words.words[i];
+    int verdict = bank.verdicts[guess][target];
+    num_targets_by_verdict[verdict]++;
+  }
+
+  guess_heuristic heuristic = {};
+  for (int verdict = 0; verdict < NUM_VERDICTS; verdict++) {
+    int group_size = num_targets_by_verdict[verdict];
+    if (group_size == 0) {
+      continue;
+    }
+    heuristic.num_verdict_groups_with_targets++;
+    heuristic.num_targets_in_largest_verdict_group =
+        std::max(heuristic.num_targets_in_largest_verdict_group, group_size);
+    double group_probability = group_size * 1.0 / remaining_words.num_targets;
+    heuristic.entropy += -std::log2(group_probability) * group_probability;
+  }
+  return heuristic;
+};
 
 static constexpr int NUM_CODES_IN_GROUP_HASH = 2;
 
 namespace {
 
-using GroupHash = std::array<uint64_t, NUM_CODES_IN_GROUP_HASH>;
+using word_list_hash = std::array<uint64_t, NUM_CODES_IN_GROUP_HASH>;
 
-struct GroupHashFindBestGuessCacheHasher {
-  uint64_t operator()(GroupHash group_hash) const {
+struct word_list_hash_unordered_map_hasher {
+  uint64_t operator()(word_list_hash word_list_hash) const {
     uint64_t combined_hash = 0;
-    for (uint64_t code : group_hash) {
+    for (uint64_t code : word_list_hash) {
       combined_hash = combined_hash * 31 + code;
     }
     return combined_hash;
   }
 };
 
-using FindBestGuessCache =
-    __gnu_pbds::gp_hash_table<GroupHash, BestGuessInfo,
-                              GroupHashFindBestGuessCacheHasher>;
-
 }  // namespace
 
-static GroupHash hash_group(const Group& group) {
+static word_list_hash hash_word_list(const word_list& list) {
   static constexpr uint64_t MOD[] = {(1ULL << 63) - 25, (1ULL << 63) - 165};
 
   static uint64_t pow_2_mod[MAX_BANK_SIZE * 2][NUM_CODES_IN_GROUP_HASH];
@@ -371,12 +380,12 @@ static GroupHash hash_group(const Group& group) {
     return 0;
   }();
 
-  GroupHash hash = {};
-  for (int i = 0; i < group.num_words; i++) {
+  word_list_hash hash = {};
+  for (int i = 0; i < list.num_words; i++) {
     for (int m = 0; m < NUM_CODES_IN_GROUP_HASH; m++) {
-      bool is_word_target = i < group.num_targets;
+      bool is_word_target = i < list.num_targets;
       int encoded_word_index =
-          group.words[i] + (is_word_target ? MAX_BANK_SIZE : 0);
+          list.words[i] + (is_word_target ? MAX_BANK_SIZE : 0);
       hash[m] += pow_2_mod[encoded_word_index][m];
       hash[m] %= MOD[m];
     }
@@ -384,117 +393,139 @@ static GroupHash hash_group(const Group& group) {
   return hash;
 };
 
-static FindBestGuessCache find_best_guess_cache_by_attempt[MAX_NUM_ATTEMPTS];
+namespace {
 
-BestGuessInfo find_best_guess(
-    const Bank& bank, int num_attempts, const Group& guessable,
-    FindBestGuessCallbackForCandidate callback_for_candidate) {
-  assert(num_attempts > 0);
-  if (guessable.num_targets == 1) {
-    return BestGuessInfo{.guess = guessable.words[0], .cost = 1};
+using find_best_guess_by_word_list_cache =
+    std::unordered_map<word_list_hash, candidate_info,
+                       word_list_hash_unordered_map_hasher>;
+
+};
+
+static find_best_guess_by_word_list_cache
+    find_best_guess_cache_by_attempt[MAX_NUM_ATTEMPTS];
+
+candidate_info find_best_guess(
+    const word_bank& bank, int num_attempts, const word_list& remaining_words,
+    find_best_guess_callback_for_candidate callback_for_candidate) {
+  if (remaining_words.num_targets == 1) {
+    return candidate_info{
+        .guess = remaining_words.words[0],
+        .performance = {.total_attempts = 1},
+    };
   }
   if (num_attempts == 1) {
-    return BestGuessInfo{.guess = guessable.words[0], .cost = INFINITE_COST};
+    return candidate_info{
+        .guess = remaining_words.words[0],
+        .performance = {.has_missed_targets = true},
+    };
   }
-  if (guessable.num_targets == 2) {
-    return BestGuessInfo{.guess = guessable.words[0], .cost = 1 + 2};
+  if (remaining_words.num_targets == 2) {
+    return candidate_info{
+        .guess = remaining_words.words[0],
+        .performance = {.total_attempts = 1 + 2},
+    };
   }
 
-  GroupHash guessable_hash = hash_group(guessable);
-  FindBestGuessCache& cache =
+  word_list_hash remaining_words_hash = hash_word_list(remaining_words);
+  find_best_guess_by_word_list_cache& cache =
       find_best_guess_cache_by_attempt[num_attempts - 1];
-  if (auto it = cache.find(guessable_hash); it != cache.end()) {
+  if (auto it = cache.find(remaining_words_hash); it != cache.end()) {
     return it->second;
   }
 
-  static Grouping preallocated_grouping_by_attempt[MAX_NUM_ATTEMPTS];
-  Grouping& grouping = preallocated_grouping_by_attempt[num_attempts - 1];
-
-  const auto prune_candidates = [num_attempts, &bank, &guessable, &grouping](
-                                    int& out_num_candidates,
-                                    int* out_candidates) -> void {
-    const int MAX_ENTROPY_PLACE_TO_CONSIDER = 32;
+  const auto find_candidates = [](word_list& out_candidates,
+                                  const word_bank& bank, int num_attempts,
+                                  const word_list& remaining_words) -> void {
+    const int MAX_ENTROPY_PLACE_TO_CONSIDER = 128;
     const double MAX_ENTROPY_DIFFERENCE_TO_CONSIDER = 1;
 
-    struct CandidateHeuristic {
+    struct candidate_heuristic {
       int candidate;
-      bool is_candidate_target;
-      GroupingHeuristic heuristic;
+      double entropy;
+      bool is_target;
     };
-    static CandidateHeuristic candidate_heuristics[MAX_BANK_SIZE];
-
+    static candidate_heuristic heuristics[MAX_BANK_SIZE];
     double max_candidate_entropy = 0;
-    for (int i = 0; i < guessable.num_words; i++) {
-      int candidate = guessable.words[i];
-      group_guesses(grouping, bank, guessable, candidate, true);
-      candidate_heuristics[i] = {
+    for (int i = 0; i < remaining_words.num_words; i++) {
+      int candidate = remaining_words.words[i];
+      double entropy =
+          compute_guess_heuristic(bank, remaining_words, candidate).entropy;
+      heuristics[i] = {
           .candidate = candidate,
-          .is_candidate_target = candidate < guessable.num_targets,
-          .heuristic = grouping.heuristic,
+          .entropy = entropy,
+          .is_target = candidate < remaining_words.num_targets,
       };
-      max_candidate_entropy =
-          std::max(max_candidate_entropy, grouping.heuristic.entropy);
+      max_candidate_entropy = std::max(max_candidate_entropy, entropy);
     }
     double min_entropy_to_consider =
         max_candidate_entropy - MAX_ENTROPY_DIFFERENCE_TO_CONSIDER;
-    if (guessable.num_words > MAX_ENTROPY_PLACE_TO_CONSIDER) {
+    if (remaining_words.num_words > MAX_ENTROPY_PLACE_TO_CONSIDER) {
       const auto candidate_heuristic_greater =
-          [&guessable](const CandidateHeuristic& a,
-                       const CandidateHeuristic& b) -> bool {
-        return std::tuple{a.heuristic.entropy, a.is_candidate_target} >
-               std::tuple{b.heuristic.entropy, b.is_candidate_target};
+          [](const candidate_heuristic& a,
+             const candidate_heuristic& b) -> bool {
+        return std::tuple{a.entropy, a.is_target} >
+               std::tuple{b.entropy, b.is_target};
       };
-      CandidateHeuristic* cutting_point =
-          candidate_heuristics + MAX_ENTROPY_PLACE_TO_CONSIDER - 1;
-      std::nth_element(candidate_heuristics, cutting_point,
-                       candidate_heuristics + guessable.num_words,
+      candidate_heuristic* cutting_point =
+          heuristics + MAX_ENTROPY_PLACE_TO_CONSIDER - 1;
+      std::nth_element(heuristics, cutting_point,
+                       heuristics + remaining_words.num_words,
                        candidate_heuristic_greater);
       min_entropy_to_consider =
-          std::max(min_entropy_to_consider, cutting_point->heuristic.entropy);
+          std::max(min_entropy_to_consider, cutting_point->entropy);
     }
 
-    out_num_candidates = 0;
-    for (int i = 0; i < guessable.num_words; i++) {
-      const CandidateHeuristic& ch = candidate_heuristics[i];
-      if (ch.heuristic.entropy < min_entropy_to_consider) {
+    out_candidates.num_words = 0;
+    out_candidates.num_targets = 0;
+    for (int i = 0; i < remaining_words.num_words; i++) {
+      const candidate_heuristic& heuristic = heuristics[i];
+      if (heuristic.entropy < min_entropy_to_consider) {
         continue;
       }
-      out_candidates[out_num_candidates] = ch.candidate;
-      out_num_candidates++;
+      out_candidates.words[out_candidates.num_words] = heuristic.candidate;
+      out_candidates.num_words++;
+      if (heuristic.is_target) {
+        out_candidates.num_targets++;
+      }
     }
   };
+  static word_list preallocated_candidates_by_attempt[MAX_NUM_ATTEMPTS];
+  word_list& candidates = preallocated_candidates_by_attempt[num_attempts - 1];
+  find_candidates(candidates, bank, num_attempts, remaining_words);
 
-  static int preallocated_candidates_by_attempt[MAX_NUM_ATTEMPTS]
-                                               [MAX_BANK_SIZE];
-  int* candidates = preallocated_candidates_by_attempt[num_attempts - 1];
-  int num_candidates_to_consider;
-  prune_candidates(num_candidates_to_consider, candidates);
-
-  BestGuessInfo best_guess = {.guess = guessable.words[0],
-                              .cost = INFINITE_COST};
-  for (int i = 0; i < num_candidates_to_consider; i++) {
-    int candidate = candidates[i];
-    group_guesses(grouping, bank, guessable, candidate);
-    Cost cost = guessable.num_targets +
-                evaluate_guess(bank, num_attempts - 1, grouping, {});
+  candidate_info best_guess = {
+      .guess = remaining_words.words[0],
+      .performance = {.has_missed_targets = true},
+  };
+  for (int i = 0; i < candidates.num_words; i++) {
+    int candidate = candidates.words[i];
+    performance_info guess_performance =
+        evaluate_guess(bank, num_attempts - 1, remaining_words, candidate, {});
+    guess_performance.total_attempts += remaining_words.num_targets;
     if (callback_for_candidate) {
-      callback_for_candidate(i, candidate, cost);
-    }
-    if (cost < best_guess.cost) {
-      best_guess = BestGuessInfo{
+      callback_for_candidate(candidate_info{
           .guess = candidate,
-          .cost = cost,
-          .guess_candidate_index = i,
+          .performance = guess_performance,
+      });
+    }
+    if (std::tuple{guess_performance.has_missed_targets,
+                   guess_performance.total_attempts} <
+        std::tuple{best_guess.performance.has_missed_targets,
+                   best_guess.performance.total_attempts}) {
+      best_guess = {
+          .guess = candidate,
+          .performance = guess_performance,
       };
     }
   }
 
-  cache[guessable_hash] = best_guess;
+  cache[remaining_words_hash] = best_guess;
   return best_guess;
 }
 
 static void clear_bank_specific_caches() {
-  for (FindBestGuessCache& cache : find_best_guess_cache_by_attempt) {
+  for (find_best_guess_by_word_list_cache& cache :
+       find_best_guess_cache_by_attempt) {
     cache = {};
   }
 }
