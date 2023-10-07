@@ -12,11 +12,7 @@ int main() {
   wordy_witch::load_bank(bank, "../bank/co_wordle",
                          wordy_witch::word_bank_guesses_inclusion::ALL_WORDS);
   std::vector<std::string> state = {
-      "CRATE",
-      "-----",
-      "SPINY",
-      "----#",
-      "GODLY",
+      "CRATE", "-----", "SPINY", "----#", "GODLY",
   };
 
   static wordy_witch::word_list remaining_words;
@@ -57,7 +53,9 @@ int main() {
   };
   display_initial_message_and_parse_state(remaining_words, bank, state);
 
-  const auto find_and_display_best_guess = [&state]() -> void {
+  const auto find_and_display_best_guess =
+      [](const wordy_witch::word_bank& bank, int num_attempts,
+         const wordy_witch::word_list& remaining_words) -> void {
     std::cout << "Candidate best guesses in this board state:" << std::endl;
     std::cout << "(Guess: a candidate best guess in this board state, after "
                  "basic pruning by entropy)"
@@ -80,8 +78,9 @@ int main() {
     std::cout << "Guess\tCost\tEA\tH\tNVG\tLVG" << std::endl;
 
     wordy_witch::candidate_info best_guess = wordy_witch::find_best_guess(
-        bank, wordy_witch::MAX_NUM_ATTEMPTS - state.size() / 2, remaining_words,
-        [](wordy_witch::candidate_info candidate) -> void {
+        bank, num_attempts, remaining_words,
+        [&bank,
+         &remaining_words](wordy_witch::candidate_info candidate) -> void {
           WORDY_WITCH_TRACE("Analyzed verdict remaining_words", candidate.guess,
                             candidate.performance.total_attempts,
                             candidate.performance.has_missed_targets);
@@ -109,7 +108,10 @@ int main() {
               << ")" << std::endl;
   };
 
-  const auto find_and_display_best_guess_by_verdict = [&state]() -> void {
+  const auto find_and_display_best_guess_by_verdict =
+      [](const wordy_witch::word_bank& bank, int num_attempts,
+         const wordy_witch::word_list& remaining_words,
+         const std::string& prev_guess) -> void {
     std::cout << "Best guesses in this board state for each possible verdict:"
               << std::endl;
     std::cout << "(VID: a base-3 encoded number of this verdict)" << std::endl;
@@ -140,26 +142,26 @@ int main() {
         << std::endl;
     std::cout << "VID\tLG\tV\tNG\tGL\tTL\tCost\tEA\tH\tNVG\tLVG" << std::endl;
 
-    int guess = wordy_witch::find_word(bank, state.back()).value();
+    int guess = wordy_witch::find_word(bank, prev_guess).value();
     wordy_witch::performance_info performance = wordy_witch::evaluate_guess(
-        bank, wordy_witch::MAX_NUM_ATTEMPTS - 1 - state.size() / 2,
-        remaining_words, guess,
-        [&state](int verdict, const wordy_witch::word_list& remaining_words,
-                 wordy_witch::candidate_info best_guess) -> void {
+        bank, num_attempts, remaining_words, guess,
+        [&bank, &prev_guess](int verdict,
+                             const wordy_witch::word_list& verdict_group,
+                             wordy_witch::candidate_info best_guess) -> void {
           WORDY_WITCH_TRACE("Analyzed candidate", verdict, best_guess.guess,
                             best_guess.performance.total_attempts,
                             best_guess.performance.has_missed_targets);
           wordy_witch::guess_heuristic heuristic =
-              wordy_witch::compute_guess_heuristic(bank, remaining_words,
+              wordy_witch::compute_guess_heuristic(bank, verdict_group,
                                                    best_guess.guess);
-          std::cout << verdict << "\t" << state.back() << "\t"
+          std::cout << verdict << "\t" << prev_guess << "\t"
                     << wordy_witch::format_verdict(verdict) << "\t"
                     << bank.words[best_guess.guess] << "\t"
-                    << remaining_words.num_words << "\t"
-                    << remaining_words.num_targets << "\t"
+                    << verdict_group.num_words << "\t"
+                    << verdict_group.num_targets << "\t"
                     << best_guess.performance.total_attempts << "\t"
                     << best_guess.performance.total_attempts * 1.0 /
-                           remaining_words.num_targets
+                           verdict_group.num_targets
                     << "\t" << heuristic.entropy << "\t"
                     << heuristic.num_verdict_groups_with_targets << "\t"
                     << heuristic.num_targets_in_largest_verdict_group
@@ -169,7 +171,7 @@ int main() {
 
     wordy_witch::guess_heuristic heuristic =
         wordy_witch::compute_guess_heuristic(bank, remaining_words, guess);
-    std::cout << "Overall, best play after guessing " << state.back()
+    std::cout << "Overall, best play after guessing " << prev_guess
               << " (H: " << heuristic.entropy
               << ", NVG: " << heuristic.num_verdict_groups_with_targets
               << ", LVG: " << heuristic.num_targets_in_largest_verdict_group
@@ -181,8 +183,12 @@ int main() {
   };
 
   if (state.size() % 2 == 0) {
-    find_and_display_best_guess();
+    find_and_display_best_guess(
+        bank, wordy_witch::MAX_NUM_ATTEMPTS - state.size() / 2,
+        remaining_words);
   } else {
-    find_and_display_best_guess_by_verdict();
+    find_and_display_best_guess_by_verdict(
+        bank, wordy_witch::MAX_NUM_ATTEMPTS - 1 - state.size() / 2,
+        remaining_words, state.back());
   }
 }

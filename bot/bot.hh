@@ -282,7 +282,7 @@ using find_best_guess_callback_for_candidate =
     std::function<void(candidate_info candidate)>;
 
 candidate_info find_best_guess(
-    const word_bank& bank, int num_attempts, const word_list& remaining_words,
+    const word_bank& bank, int num_attempts, const word_list& verdict_group,
     find_best_guess_callback_for_candidate callback_for_candidate);
 
 using evaluate_guess_callback_for_group = std::function<void(
