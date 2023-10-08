@@ -9,10 +9,11 @@
 
 int main() {
   static wordy_witch::word_bank bank;
-  wordy_witch::load_bank(bank, "../bank/co_wordle",
-                         wordy_witch::word_bank_guesses_inclusion::ALL_WORDS);
+  wordy_witch::load_bank(
+      bank, "../bank/co_wordle",
+      wordy_witch::word_bank_guesses_inclusion::ALL_WORDS);
   std::vector<std::string> state = {
-      "CRATE", "-----", "SPINY", "----#", "GODLY",
+      "LEAST",
   };
 
   static wordy_witch::word_list remaining_words;
@@ -53,6 +54,9 @@ int main() {
   };
   display_initial_message_and_parse_state(remaining_words, bank, state);
 
+  static wordy_witch::bot_cache bot_cache;
+  wordy_witch::reset_cache(bot_cache);
+
   const auto find_and_display_best_guess =
       [](const wordy_witch::word_bank& bank, int num_attempts,
          const wordy_witch::word_list& remaining_words) -> void {
@@ -78,7 +82,7 @@ int main() {
     std::cout << "Guess\tCost\tEA\tH\tNVG\tLVG" << std::endl;
 
     wordy_witch::candidate_info best_guess = wordy_witch::find_best_guess(
-        bank, num_attempts, remaining_words,
+        bank, bot_cache, num_attempts, remaining_words,
         [&bank,
          &remaining_words](wordy_witch::candidate_info candidate) -> void {
           WORDY_WITCH_TRACE("Analyzed verdict remaining_words", candidate.guess,
@@ -144,7 +148,7 @@ int main() {
 
     int guess = wordy_witch::find_word(bank, prev_guess).value();
     wordy_witch::performance_info performance = wordy_witch::evaluate_guess(
-        bank, num_attempts, remaining_words, guess,
+        bank, bot_cache, num_attempts, remaining_words, guess,
         [&bank, &prev_guess](int verdict,
                              const wordy_witch::word_list& verdict_group,
                              wordy_witch::candidate_info best_guess) -> void {

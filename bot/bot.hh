@@ -120,13 +120,11 @@ enum struct word_bank_guesses_inclusion : int {
   ALL_WORDS,
 };
 
-static void clear_bank_specific_caches();
-
 void load_bank(word_bank& out_bank, std::filesystem::path dict_path,
                word_bank_guesses_inclusion guesses_inclusion) {
-  clear_bank_specific_caches();
-
-  const auto read_bank = [&out_bank, dict_path, guesses_inclusion]() -> void {
+  const auto read_bank =
+      [](word_bank& out_bank, std::filesystem::path dict_path,
+         word_bank_guesses_inclusion guesses_inclusion) -> void {
     out_bank.num_words = 0;
     out_bank.num_targets = 0;
     std::ifstream target_file(dict_path / "targets.txt");
@@ -163,26 +161,26 @@ void load_bank(word_bank& out_bank, std::filesystem::path dict_path,
       out_bank.num_words++;
     }
   };
-  read_bank();
+  read_bank(out_bank, dict_path, guesses_inclusion);
 
-  const auto transform_bank_words_to_upper = [&out_bank]() -> void {
-    for (int i = 0; i < out_bank.num_words; i++) {
+  const auto transform_bank_words_to_upper = [](word_bank& bank) -> void {
+    for (int i = 0; i < bank.num_words; i++) {
       for (int j = 0; j < WORD_SIZE; j++) {
-        out_bank.words[i][j] = std::toupper(out_bank.words[i][j]);
+        bank.words[i][j] = std::toupper(bank.words[i][j]);
       }
     }
   };
-  transform_bank_words_to_upper();
+  transform_bank_words_to_upper(out_bank);
 
-  const auto precompute_judge_data = [&out_bank]() -> void {
-    for (int i = 0; i < out_bank.num_words; i++) {
+  const auto precompute_judge_data = [](word_bank& bank) -> void {
+    for (int i = 0; i < bank.num_words; i++) {
       if (std::popcount(static_cast<unsigned>(i)) == 1) {
-        WORDY_WITCH_TRACE("Precomputing judge data", i, out_bank.num_words);
+        WORDY_WITCH_TRACE("Precomputing judge data", i, bank.num_words);
       }
       std::optional<int> sample_next_guesses[NUM_VERDICTS] = {};
-      for (int j = 0; j < out_bank.num_words; j++) {
-        int verdict = judge(out_bank.words[i], out_bank.words[j]);
-        out_bank.verdicts[i][j] = verdict;
+      for (int j = 0; j < bank.num_words; j++) {
+        int verdict = judge(bank.words[i], bank.words[j]);
+        bank.verdicts[i][j] = verdict;
         sample_next_guesses[verdict] = j;
       }
       for (int prev_verdict = 0; prev_verdict < NUM_VERDICTS; prev_verdict++) {
@@ -195,17 +193,16 @@ void load_bank(word_bank& out_bank, std::filesystem::path dict_path,
             continue;
           }
           char* candidate_guess =
-              out_bank.words[sample_next_guesses[candidate_verdict].value()];
-          int valid = check_is_hard_mode_valid(out_bank.words[i], prev_verdict,
+              bank.words[sample_next_guesses[candidate_verdict].value()];
+          int valid = check_is_hard_mode_valid(bank.words[i], prev_verdict,
                                                candidate_guess);
-          out_bank
-              .hard_mode_valid_candidates[i][prev_verdict][candidate_verdict] =
+          bank.hard_mode_valid_candidates[i][prev_verdict][candidate_verdict] =
               valid;
         }
       }
     }
   };
-  precompute_judge_data();
+  precompute_judge_data(out_bank);
 }
 
 std::optional<int> find_word(const word_bank& bank, std::string word) {
@@ -278,19 +275,73 @@ struct candidate_info {
   performance_info performance;
 };
 
+static constexpr int NUM_CODES_IN_GROUP_HASH = 2;
+using word_list_hash = std::array<uint64_t, NUM_CODES_IN_GROUP_HASH>;
+
+struct word_list_hash_unordered_map_hasher {
+  uint64_t operator()(word_list_hash word_list_hash) const {
+    uint64_t combined_hash = 0;
+    for (uint64_t code : word_list_hash) {
+      combined_hash = combined_hash * 31 + code;
+    }
+    return combined_hash;
+  }
+};
+
+static word_list_hash hash_word_list(const word_list& list) {
+  static constexpr uint64_t MOD[] = {(1ULL << 63) - 25, (1ULL << 63) - 165};
+
+  static uint64_t pow_2_mod[MAX_BANK_SIZE * 2][NUM_CODES_IN_GROUP_HASH];
+  static const int precompute_pow_2_mod = []() -> int {
+    std::fill_n(pow_2_mod[0], NUM_CODES_IN_GROUP_HASH, 1);
+    for (int i = 1; i < MAX_BANK_SIZE * 2; i++) {
+      for (int m = 0; m < NUM_CODES_IN_GROUP_HASH; m++) {
+        pow_2_mod[i][m] = pow_2_mod[i - 1][m] * 2 % MOD[m];
+      }
+    }
+    return 0;
+  }();
+
+  word_list_hash hash = {};
+  for (int i = 0; i < list.num_words; i++) {
+    for (int m = 0; m < NUM_CODES_IN_GROUP_HASH; m++) {
+      bool is_word_target = i < list.num_targets;
+      int encoded_word_index =
+          list.words[i] + (is_word_target ? MAX_BANK_SIZE : 0);
+      hash[m] += pow_2_mod[encoded_word_index][m];
+      hash[m] %= MOD[m];
+    }
+  }
+  return hash;
+};
+
+using find_best_guess_by_word_list_cache =
+    std::unordered_map<word_list_hash, candidate_info,
+                       word_list_hash_unordered_map_hasher>;
+
+static find_best_guess_by_word_list_cache
+    find_best_guess_cache_by_attempt[MAX_NUM_ATTEMPTS];
+
+struct bot_cache {
+  find_best_guess_by_word_list_cache
+      find_best_guess_cache_by_attempt[MAX_NUM_ATTEMPTS];
+};
+
 using find_best_guess_callback_for_candidate =
     std::function<void(candidate_info candidate)>;
 
 candidate_info find_best_guess(
-    const word_bank& bank, int num_attempts, const word_list& verdict_group,
+    const word_bank& bank, bot_cache& cache, int num_attempts,
+    const word_list& verdict_group,
     find_best_guess_callback_for_candidate callback_for_candidate);
 
 using evaluate_guess_callback_for_group = std::function<void(
     int verdict, const word_list& group, candidate_info best_guess)>;
 
 performance_info evaluate_guess(
-    const word_bank& bank, int num_attempts, const word_list& remaining_words,
-    int guess, evaluate_guess_callback_for_group callback_for_group) {
+    const word_bank& bank, bot_cache& cache, int num_attempts,
+    const word_list& remaining_words, int guess,
+    evaluate_guess_callback_for_group callback_for_group) {
   performance_info performance = {};
 
   static verdict_groups preallocated_groups_by_attempt[MAX_NUM_ATTEMPTS];
@@ -305,7 +356,8 @@ performance_info evaluate_guess(
     if (groups[verdict].num_targets == 0) {
       continue;
     }
-    candidate_info best_guess = find_best_guess(bank, num_attempts, group, {});
+    candidate_info best_guess =
+        find_best_guess(bank, cache, num_attempts, group, {});
     if (callback_for_group) {
       callback_for_group(verdict, group, best_guess);
     }
@@ -348,64 +400,9 @@ guess_heuristic compute_guess_heuristic(const word_bank& bank,
   return heuristic;
 };
 
-static constexpr int NUM_CODES_IN_GROUP_HASH = 2;
-
-namespace {
-
-using word_list_hash = std::array<uint64_t, NUM_CODES_IN_GROUP_HASH>;
-
-struct word_list_hash_unordered_map_hasher {
-  uint64_t operator()(word_list_hash word_list_hash) const {
-    uint64_t combined_hash = 0;
-    for (uint64_t code : word_list_hash) {
-      combined_hash = combined_hash * 31 + code;
-    }
-    return combined_hash;
-  }
-};
-
-}  // namespace
-
-static word_list_hash hash_word_list(const word_list& list) {
-  static constexpr uint64_t MOD[] = {(1ULL << 63) - 25, (1ULL << 63) - 165};
-
-  static uint64_t pow_2_mod[MAX_BANK_SIZE * 2][NUM_CODES_IN_GROUP_HASH];
-  static const int precompute_pow_2_mod = []() -> int {
-    std::fill_n(pow_2_mod[0], NUM_CODES_IN_GROUP_HASH, 1);
-    for (int i = 1; i < MAX_BANK_SIZE * 2; i++) {
-      for (int m = 0; m < NUM_CODES_IN_GROUP_HASH; m++) {
-        pow_2_mod[i][m] = pow_2_mod[i - 1][m] * 2 % MOD[m];
-      }
-    }
-    return 0;
-  }();
-
-  word_list_hash hash = {};
-  for (int i = 0; i < list.num_words; i++) {
-    for (int m = 0; m < NUM_CODES_IN_GROUP_HASH; m++) {
-      bool is_word_target = i < list.num_targets;
-      int encoded_word_index =
-          list.words[i] + (is_word_target ? MAX_BANK_SIZE : 0);
-      hash[m] += pow_2_mod[encoded_word_index][m];
-      hash[m] %= MOD[m];
-    }
-  }
-  return hash;
-};
-
-namespace {
-
-using find_best_guess_by_word_list_cache =
-    std::unordered_map<word_list_hash, candidate_info,
-                       word_list_hash_unordered_map_hasher>;
-
-};
-
-static find_best_guess_by_word_list_cache
-    find_best_guess_cache_by_attempt[MAX_NUM_ATTEMPTS];
-
 candidate_info find_best_guess(
-    const word_bank& bank, int num_attempts, const word_list& remaining_words,
+    const word_bank& bank, bot_cache& cache, int num_attempts,
+    const word_list& remaining_words,
     find_best_guess_callback_for_candidate callback_for_candidate) {
   if (remaining_words.num_targets == 1) {
     return candidate_info{
@@ -427,16 +424,17 @@ candidate_info find_best_guess(
   }
 
   word_list_hash remaining_words_hash = hash_word_list(remaining_words);
-  find_best_guess_by_word_list_cache& cache =
-      find_best_guess_cache_by_attempt[num_attempts - 1];
-  if (auto it = cache.find(remaining_words_hash); it != cache.end()) {
+  find_best_guess_by_word_list_cache& result_cache =
+      cache.find_best_guess_cache_by_attempt[num_attempts - 1];
+  if (auto it = result_cache.find(remaining_words_hash);
+      it != result_cache.end()) {
     return it->second;
   }
 
   const auto find_candidates = [](word_list& out_candidates,
                                   const word_bank& bank, int num_attempts,
                                   const word_list& remaining_words) -> void {
-    const int MAX_ENTROPY_PLACE_TO_CONSIDER = 128;
+    const int MAX_ENTROPY_PLACE_TO_CONSIDER = 16;
     const double MAX_ENTROPY_DIFFERENCE_TO_CONSIDER = 1;
 
     struct candidate_heuristic {
@@ -499,8 +497,8 @@ candidate_info find_best_guess(
   };
   for (int i = 0; i < candidates.num_words; i++) {
     int candidate = candidates.words[i];
-    performance_info guess_performance =
-        evaluate_guess(bank, num_attempts - 1, remaining_words, candidate, {});
+    performance_info guess_performance = evaluate_guess(
+        bank, cache, num_attempts - 1, remaining_words, candidate, {});
     guess_performance.total_attempts += remaining_words.num_targets;
     if (callback_for_candidate) {
       callback_for_candidate(candidate_info{
@@ -519,14 +517,14 @@ candidate_info find_best_guess(
     }
   }
 
-  cache[remaining_words_hash] = best_guess;
+  result_cache[remaining_words_hash] = best_guess;
   return best_guess;
 }
 
-static void clear_bank_specific_caches() {
+void reset_cache(bot_cache& cache) {
   for (find_best_guess_by_word_list_cache& cache :
-       find_best_guess_cache_by_attempt) {
-    cache = {};
+       cache.find_best_guess_cache_by_attempt) {
+    cache.clear();
   }
 }
 
