@@ -217,7 +217,7 @@ std::optional<int> find_word(const word_bank& bank, std::string word) {
 
 #pragma region playing
 
-constexpr int MAX_NUM_ATTEMPTS = 6;
+constexpr int MAX_NUM_ATTEMPTS_ALLOWED = 6;
 
 struct word_list {
   int num_words;
@@ -270,8 +270,8 @@ void group_remaining_words(verdict_groups& out_groups, const word_bank& bank,
 static constexpr int ALL_GREEN_VERDICT = NUM_VERDICTS - 1;
 
 struct performance_info {
-  int total_attempts;
   bool has_missed_targets;
+  int total_attempts;
 };
 
 struct candidate_info {
@@ -323,45 +323,69 @@ using find_best_guess_by_word_list_cache =
     std::unordered_map<word_list_hash, candidate_info,
                        word_list_hash_unordered_map_hasher>;
 
-static find_best_guess_by_word_list_cache
-    find_best_guess_cache_by_attempt[MAX_NUM_ATTEMPTS];
-
 struct bot_cache {
   find_best_guess_by_word_list_cache
-      find_best_guess_cache_by_attempt[MAX_NUM_ATTEMPTS];
+      find_best_guess_cache_by_attempts_used[MAX_NUM_ATTEMPTS_ALLOWED];
 };
 
 using find_best_guess_callback_for_candidate =
     std::function<void(candidate_info candidate)>;
 
 candidate_info find_best_guess(
-    const word_bank& bank, bot_cache& cache, int num_attempts,
-    const word_list& verdict_group,
+    const word_bank& bank, bot_cache& cache, int num_attempts_allowed,
+    int num_attempts_used, const word_list& verdict_group,
     find_best_guess_callback_for_candidate callback_for_candidate);
 
 using evaluate_guess_callback_for_group = std::function<void(
     int verdict, const word_list& group, candidate_info best_guess)>;
 
 performance_info evaluate_guess(
-    const word_bank& bank, bot_cache& cache, int num_attempts,
-    const word_list& remaining_words, int guess,
+    const word_bank& bank, bot_cache& cache, int num_attempts_allowed,
+    int num_attempts_used, const word_list& remaining_words, int guess,
     evaluate_guess_callback_for_group callback_for_group) {
-  performance_info performance = {};
+  if (remaining_words.num_targets == 1) {
+    if (guess == remaining_words.words[0]) {
+      return performance_info{.total_attempts = 0};
+    }
+  } else if (remaining_words.num_targets == 2) {
+    if (guess == remaining_words.words[0] ||
+        guess == remaining_words.words[1]) {
+      return performance_info{.total_attempts = 0 + 1};
+    }
+  }
 
-  static verdict_groups preallocated_groups_by_attempt[MAX_NUM_ATTEMPTS];
-  verdict_groups& groups = preallocated_groups_by_attempt[num_attempts - 1];
+  static verdict_groups
+      preallocated_groups_by_attempts_used[MAX_NUM_ATTEMPTS_ALLOWED];
+  verdict_groups& groups =
+      preallocated_groups_by_attempts_used[num_attempts_used];
   group_remaining_words(groups, bank, remaining_words, guess);
 
+  performance_info performance = {};
   for (int verdict = NUM_VERDICTS - 1; verdict >= 0; verdict--) {
     if (verdict == ALL_GREEN_VERDICT) {
       continue;
     }
     const word_list& group = groups[verdict];
-    if (groups[verdict].num_targets == 0) {
+    if (group.num_targets == 0) {
       continue;
     }
-    candidate_info best_guess =
-        find_best_guess(bank, cache, num_attempts, group, {});
+    if (group.num_targets >= remaining_words.num_targets - 1) {
+      /*
+        This guess only eliminated at most one of the remaining targets.
+        Assuming it was the best guess, this means from this point on we have no
+        better strategy than trial-and-error, guessing one target at a time for
+        the rest of this game.
+      */
+      if (group.num_targets > num_attempts_allowed - num_attempts_used) {
+        return performance_info{.has_missed_targets = true};
+      }
+      return performance_info{
+          .total_attempts = group.num_targets * (group.num_targets + 1) / 2,
+      };
+    }
+
+    candidate_info best_guess = find_best_guess(
+        bank, cache, num_attempts_allowed, num_attempts_used, group, {});
     if (callback_for_group) {
       callback_for_group(verdict, group, best_guess);
     }
@@ -432,8 +456,8 @@ double compute_next_attempt_entropy(const word_bank& bank,
 };
 
 candidate_info find_best_guess(
-    const word_bank& bank, bot_cache& cache, int num_attempts,
-    const word_list& remaining_words,
+    const word_bank& bank, bot_cache& cache, int num_attempts_allowed,
+    int num_attempts_used, const word_list& remaining_words,
     find_best_guess_callback_for_candidate callback_for_candidate) {
   if (remaining_words.num_targets == 1) {
     return candidate_info{
@@ -441,7 +465,7 @@ candidate_info find_best_guess(
         .performance = {.total_attempts = 1},
     };
   }
-  if (num_attempts == 1) {
+  if (num_attempts_used == num_attempts_allowed - 1) {
     return candidate_info{
         .guess = remaining_words.words[0],
         .performance = {.has_missed_targets = true},
@@ -456,18 +480,19 @@ candidate_info find_best_guess(
 
   word_list_hash remaining_words_hash = hash_word_list(remaining_words);
   find_best_guess_by_word_list_cache& result_cache =
-      cache.find_best_guess_cache_by_attempt[num_attempts - 1];
+      cache.find_best_guess_cache_by_attempts_used[num_attempts_used];
   if (auto it = result_cache.find(remaining_words_hash);
       it != result_cache.end()) {
     return it->second;
   }
 
   auto find_candidates = [](word_list& out_candidates, const word_bank& bank,
-                            int num_attempts,
+                            int num_attempts_used,
                             const word_list& remaining_words) -> void {
-    constexpr int MIN_NUM_ATTEMPTS_TO_USE_TWO_ATTEMPT_ENTROPY = 4;
-    int max_entropy_place_to_consider = 16;
-    if (num_attempts < MIN_NUM_ATTEMPTS_TO_USE_TWO_ATTEMPT_ENTROPY) {
+    constexpr int MAX_NUM_ATTEMPTS_USED_TO_PRUNE_BY_TWO_ATTEMPT_ENTROPY = 1;
+    int max_entropy_place_to_consider = 32;
+    if (num_attempts_used <=
+        MAX_NUM_ATTEMPTS_USED_TO_PRUNE_BY_TWO_ATTEMPT_ENTROPY) {
       max_entropy_place_to_consider /= 2;
     }
     double max_entropy_difference_to_consider = 1.0;
@@ -527,7 +552,8 @@ candidate_info find_best_guess(
     });
     double min_two_attempt_entropy_to_consider =
         std::numeric_limits<double>::infinity();
-    if (num_attempts > MIN_NUM_ATTEMPTS_TO_USE_TWO_ATTEMPT_ENTROPY &&
+    if (num_attempts_used <=
+            MAX_NUM_ATTEMPTS_USED_TO_PRUNE_BY_TWO_ATTEMPT_ENTROPY &&
         remaining_words.num_words >
             max_entropy_place_to_consider_computing_two_attempt_entropy) {
       double min_entropy_to_consider_computing_two_attempt_entropy =
@@ -592,9 +618,11 @@ candidate_info find_best_guess(
       }
     }
   };
-  static word_list preallocated_candidates_by_attempt[MAX_NUM_ATTEMPTS];
-  word_list& candidates = preallocated_candidates_by_attempt[num_attempts - 1];
-  find_candidates(candidates, bank, num_attempts, remaining_words);
+  static word_list
+      preallocated_candidates_by_attempts_used[MAX_NUM_ATTEMPTS_ALLOWED];
+  word_list& candidates =
+      preallocated_candidates_by_attempts_used[num_attempts_used];
+  find_candidates(candidates, bank, num_attempts_used, remaining_words);
 
   candidate_info best_guess = {
       .guess = remaining_words.words[0],
@@ -602,8 +630,9 @@ candidate_info find_best_guess(
   };
   for (int i = 0; i < candidates.num_words; i++) {
     int candidate = candidates.words[i];
-    performance_info guess_performance = evaluate_guess(
-        bank, cache, num_attempts - 1, remaining_words, candidate, {});
+    performance_info guess_performance =
+        evaluate_guess(bank, cache, num_attempts_allowed, num_attempts_used + 1,
+                       remaining_words, candidate, {});
     guess_performance.total_attempts += remaining_words.num_targets;
     if (callback_for_candidate) {
       callback_for_candidate(candidate_info{
@@ -628,7 +657,7 @@ candidate_info find_best_guess(
 
 void reset_cache(bot_cache& cache) {
   for (find_best_guess_by_word_list_cache& cache :
-       cache.find_best_guess_cache_by_attempt) {
+       cache.find_best_guess_cache_by_attempts_used) {
     cache.clear();
   }
 }

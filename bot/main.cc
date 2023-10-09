@@ -56,7 +56,7 @@ int main() {
   wordy_witch::reset_cache(bot_cache);
 
   auto find_and_display_best_guess =
-      [](const wordy_witch::word_bank& bank, int num_attempts,
+      [](const wordy_witch::word_bank& bank, int num_attempts_used,
          const wordy_witch::word_list& remaining_words) -> void {
     std::cout << "Candidate best guesses in this board state:" << std::endl;
     std::cout << "(Guess: a candidate best guess in this board state, after "
@@ -83,7 +83,8 @@ int main() {
     std::cout << "Guess\tCost\tEA\tH\tNVG\tLVG\tH2" << std::endl;
 
     wordy_witch::candidate_info best_guess = wordy_witch::find_best_guess(
-        bank, bot_cache, num_attempts, remaining_words,
+        bank, bot_cache, wordy_witch::MAX_NUM_ATTEMPTS_ALLOWED,
+        num_attempts_used, remaining_words,
         [&bank,
          &remaining_words](wordy_witch::candidate_info candidate) -> void {
           WORDY_WITCH_TRACE("Analyzed verdict remaining_words", candidate.guess,
@@ -117,7 +118,7 @@ int main() {
   };
 
   auto find_and_display_best_guess_by_verdict =
-      [](const wordy_witch::word_bank& bank, int num_attempts,
+      [](const wordy_witch::word_bank& bank, int num_attempts_used,
          const wordy_witch::word_list& remaining_words,
          const std::string& prev_guess) -> void {
     std::cout << "Best guesses in this board state for each possible verdict:"
@@ -152,7 +153,8 @@ int main() {
 
     int guess = wordy_witch::find_word(bank, prev_guess).value();
     wordy_witch::performance_info performance = wordy_witch::evaluate_guess(
-        bank, bot_cache, num_attempts, remaining_words, guess,
+        bank, bot_cache, wordy_witch::MAX_NUM_ATTEMPTS_ALLOWED,
+        num_attempts_used, remaining_words, guess,
         [&bank, &prev_guess](int verdict,
                              const wordy_witch::word_list& verdict_group,
                              wordy_witch::candidate_info best_guess) -> void {
@@ -191,12 +193,9 @@ int main() {
   };
 
   if (state.size() % 2 == 0) {
-    find_and_display_best_guess(
-        bank, wordy_witch::MAX_NUM_ATTEMPTS - state.size() / 2,
-        remaining_words);
+    find_and_display_best_guess(bank, state.size() / 2, remaining_words);
   } else {
-    find_and_display_best_guess_by_verdict(
-        bank, wordy_witch::MAX_NUM_ATTEMPTS - 1 - state.size() / 2,
-        remaining_words, state.back());
+    find_and_display_best_guess_by_verdict(bank, state.size() / 2 + 1,
+                                           remaining_words, state.back());
   }
 }
