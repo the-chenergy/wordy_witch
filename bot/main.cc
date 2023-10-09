@@ -9,9 +9,8 @@
 
 int main() {
   static wordy_witch::word_bank bank;
-  wordy_witch::load_bank(
-      bank, "../bank/co_wordle",
-      wordy_witch::word_bank_guesses_inclusion::ALL_WORDS);
+  wordy_witch::load_bank(bank, "../bank/co_wordle",
+                         wordy_witch::word_bank_guesses_inclusion::ALL_WORDS);
   std::vector<std::string> state = {
       "LEAST",
   };
@@ -21,7 +20,7 @@ int main() {
   remaining_words.num_targets = bank.num_targets;
   std::iota(remaining_words.words, std::end(remaining_words.words), 0);
 
-  const auto display_initial_message_and_parse_state =
+  auto display_initial_message_and_parse_state =
       [](wordy_witch::word_list& remaining_words,
          const wordy_witch::word_bank& bank,
          const std::vector<std::string>& state) -> void {
@@ -34,14 +33,13 @@ int main() {
       std::cout << state[i - 1] << std::endl;
       static wordy_witch::verdict_groups groups;
       wordy_witch::group_remaining_words(groups, bank, remaining_words, guess);
-      const auto parse_verdict =
-          [](const std::string& tiles) -> std::optional<int> {
+      auto parse_verdict = [](const std::string& tiles) -> std::optional<int> {
         for (int verdict = 0; verdict < wordy_witch::NUM_VERDICTS; verdict++) {
           if (wordy_witch::format_verdict(verdict) == tiles) {
-            return {verdict};
+            return verdict;
           }
         }
-        return {};
+        return std::nullopt;
       };
       int verdict = parse_verdict(state[i]).value();
       remaining_words = groups[verdict];
@@ -57,7 +55,7 @@ int main() {
   static wordy_witch::bot_cache bot_cache;
   wordy_witch::reset_cache(bot_cache);
 
-  const auto find_and_display_best_guess =
+  auto find_and_display_best_guess =
       [](const wordy_witch::word_bank& bank, int num_attempts,
          const wordy_witch::word_list& remaining_words) -> void {
     std::cout << "Candidate best guesses in this board state:" << std::endl;
@@ -79,7 +77,10 @@ int main() {
         << "(LVG: the number of possible target words in the largest verdict "
            "remaining_words after guessing this word)"
         << std::endl;
-    std::cout << "Guess\tCost\tEA\tH\tNVG\tLVG" << std::endl;
+    std::cout << "(H2: the expected entropy produced by guessing this word and "
+                 "the best next guess)"
+              << std::endl;
+    std::cout << "Guess\tCost\tEA\tH\tNVG\tLVG\tH2" << std::endl;
 
     wordy_witch::candidate_info best_guess = wordy_witch::find_best_guess(
         bank, bot_cache, num_attempts, remaining_words,
@@ -97,7 +98,10 @@ int main() {
                            remaining_words.num_targets
                     << "\t" << heuristic.entropy << "\t"
                     << heuristic.num_verdict_groups_with_targets << "\t"
-                    << heuristic.num_targets_in_largest_verdict_group
+                    << heuristic.num_targets_in_largest_verdict_group << "\t"
+                    << heuristic.entropy +
+                           wordy_witch::compute_next_attempt_entropy(
+                               bank, remaining_words, candidate.guess)
                     << std::endl;
         });
     std::cout << std::endl;
@@ -112,7 +116,7 @@ int main() {
               << ")" << std::endl;
   };
 
-  const auto find_and_display_best_guess_by_verdict =
+  auto find_and_display_best_guess_by_verdict =
       [](const wordy_witch::word_bank& bank, int num_attempts,
          const wordy_witch::word_list& remaining_words,
          const std::string& prev_guess) -> void {

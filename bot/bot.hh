@@ -122,9 +122,8 @@ enum struct word_bank_guesses_inclusion : int {
 
 void load_bank(word_bank& out_bank, std::filesystem::path dict_path,
                word_bank_guesses_inclusion guesses_inclusion) {
-  const auto read_bank =
-      [](word_bank& out_bank, std::filesystem::path dict_path,
-         word_bank_guesses_inclusion guesses_inclusion) -> void {
+  auto read_bank = [](word_bank& out_bank, std::filesystem::path dict_path,
+                      word_bank_guesses_inclusion guesses_inclusion) -> void {
     out_bank.num_words = 0;
     out_bank.num_targets = 0;
     std::ifstream target_file(dict_path / "targets.txt");
@@ -163,7 +162,7 @@ void load_bank(word_bank& out_bank, std::filesystem::path dict_path,
   };
   read_bank(out_bank, dict_path, guesses_inclusion);
 
-  const auto transform_bank_words_to_upper = [](word_bank& bank) -> void {
+  auto transform_bank_words_to_upper = [](word_bank& bank) -> void {
     for (int i = 0; i < bank.num_words; i++) {
       for (int j = 0; j < WORD_SIZE; j++) {
         bank.words[i][j] = std::toupper(bank.words[i][j]);
@@ -172,7 +171,7 @@ void load_bank(word_bank& out_bank, std::filesystem::path dict_path,
   };
   transform_bank_words_to_upper(out_bank);
 
-  const auto precompute_judge_data = [](word_bank& bank) -> void {
+  auto precompute_judge_data = [](word_bank& bank) -> void {
     for (int i = 0; i < bank.num_words; i++) {
       if (std::popcount(static_cast<unsigned>(i)) == 1) {
         WORDY_WITCH_TRACE("Precomputing judge data", i, bank.num_words);
@@ -211,7 +210,7 @@ std::optional<int> find_word(const word_bank& bank, std::string word) {
       return i;
     }
   }
-  return {};
+  return std::nullopt;
 }
 
 #pragma endregion
@@ -229,7 +228,8 @@ struct word_list {
 using verdict_groups = word_list[NUM_VERDICTS];
 
 void group_remaining_words(verdict_groups& out_groups, const word_bank& bank,
-                           const word_list& remaining_words, int guess) {
+                           const word_list& remaining_words, int guess,
+                           bool group_targets_only = false) {
   for (word_list& group : out_groups) {
     group.num_words = 0;
     group.num_targets = 0;
@@ -242,6 +242,10 @@ void group_remaining_words(verdict_groups& out_groups, const word_bank& bank,
     group.num_words++;
     group.num_targets++;
   }
+  if (group_targets_only) {
+    return;
+  }
+
   for (int verdict = 0; verdict < NUM_VERDICTS; verdict++) {
     word_list& group = out_groups[verdict];
     if (group.num_targets == 0) {
@@ -400,6 +404,33 @@ guess_heuristic compute_guess_heuristic(const word_bank& bank,
   return heuristic;
 };
 
+double compute_next_attempt_entropy(const word_bank& bank,
+                                    const word_list& remaining_words,
+                                    int guess) {
+  static verdict_groups groups;
+  group_remaining_words(groups, bank, remaining_words, guess, true);
+  double entropy = 0.0;
+  for (word_list& group : groups) {
+    if (group.num_targets <= 1) {
+      continue;
+    }
+    double group_probability =
+        group.num_targets * 1.0 / remaining_words.num_targets;
+    if (group.num_targets == 2) {
+      entropy += group_probability;
+      continue;
+    }
+    double best_next_entropy = 0.0;
+    for (int i = 0; i < group.num_targets; i++) {
+      best_next_entropy = std::max(
+          best_next_entropy,
+          compute_guess_heuristic(bank, group, group.words[i]).entropy);
+    }
+    entropy += group_probability * best_next_entropy;
+  }
+  return entropy;
+};
+
 candidate_info find_best_guess(
     const word_bank& bank, bot_cache& cache, int num_attempts,
     const word_list& remaining_words,
@@ -431,53 +462,122 @@ candidate_info find_best_guess(
     return it->second;
   }
 
-  const auto find_candidates = [](word_list& out_candidates,
-                                  const word_bank& bank, int num_attempts,
-                                  const word_list& remaining_words) -> void {
-    const int MAX_ENTROPY_PLACE_TO_CONSIDER = 16;
-    const double MAX_ENTROPY_DIFFERENCE_TO_CONSIDER = 1;
+  auto find_candidates = [](word_list& out_candidates, const word_bank& bank,
+                            int num_attempts,
+                            const word_list& remaining_words) -> void {
+    constexpr int MIN_NUM_ATTEMPTS_TO_USE_TWO_ATTEMPT_ENTROPY = 4;
+    int max_entropy_place_to_consider =
+        num_attempts >= MIN_NUM_ATTEMPTS_TO_USE_TWO_ATTEMPT_ENTROPY ? 16 : 8;
+    double max_entropy_difference_to_consider = 1.0;
 
     struct candidate_heuristic {
       int candidate;
-      double entropy;
       bool is_target;
+      int num_targets_in_largest_group;
+      double entropy;
+      double two_attempt_entropy;
     };
     static candidate_heuristic heuristics[MAX_BANK_SIZE];
-    double max_candidate_entropy = 0;
+    double max_candidate_entropy = 0.0;
     for (int i = 0; i < remaining_words.num_words; i++) {
       int candidate = remaining_words.words[i];
-      double entropy =
-          compute_guess_heuristic(bank, remaining_words, candidate).entropy;
+      guess_heuristic heuristic =
+          compute_guess_heuristic(bank, remaining_words, candidate);
       heuristics[i] = {
           .candidate = candidate,
-          .entropy = entropy,
           .is_target = candidate < remaining_words.num_targets,
+          .num_targets_in_largest_group =
+              heuristic.num_targets_in_largest_verdict_group,
+          .entropy = heuristic.entropy,
       };
-      max_candidate_entropy = std::max(max_candidate_entropy, entropy);
+      max_candidate_entropy =
+          std::max(max_candidate_entropy, heuristic.entropy);
     }
+
+    auto find_metric_at_place =
+        [](int num_heuristics, candidate_heuristic* heuristics, int place,
+           std::function<double(const candidate_heuristic& heuristic)>
+               get_metric) -> double {
+      candidate_heuristic* cutting_point = heuristics + place - 1;
+      std::nth_element(heuristics, cutting_point, heuristics + num_heuristics,
+                       [&get_metric](const candidate_heuristic& a,
+                                     const candidate_heuristic& b) -> bool {
+                         return get_metric(a) > get_metric(b);
+                       });
+      return get_metric(*cutting_point);
+    };
     double min_entropy_to_consider =
-        max_candidate_entropy - MAX_ENTROPY_DIFFERENCE_TO_CONSIDER;
-    if (remaining_words.num_words > MAX_ENTROPY_PLACE_TO_CONSIDER) {
-      const auto candidate_heuristic_greater =
-          [](const candidate_heuristic& a,
-             const candidate_heuristic& b) -> bool {
-        return std::tuple{a.entropy, a.is_target} >
-               std::tuple{b.entropy, b.is_target};
-      };
-      candidate_heuristic* cutting_point =
-          heuristics + MAX_ENTROPY_PLACE_TO_CONSIDER - 1;
-      std::nth_element(heuristics, cutting_point,
-                       heuristics + remaining_words.num_words,
-                       candidate_heuristic_greater);
+        max_candidate_entropy - max_entropy_difference_to_consider;
+    if (remaining_words.num_words > max_entropy_place_to_consider) {
+      double max_place_entropy = find_metric_at_place(
+          remaining_words.num_words, heuristics, max_entropy_place_to_consider,
+          [](const candidate_heuristic& heuristic) -> double {
+            return heuristic.entropy;
+          });
       min_entropy_to_consider =
-          std::max(min_entropy_to_consider, cutting_point->entropy);
+          std::max(min_entropy_to_consider, max_place_entropy);
+    }
+
+    int max_entropy_place_to_consider_computing_two_attempt_entropy =
+        remaining_words.num_targets;
+    double min_two_attempt_entropy_to_consider =
+        std::numeric_limits<double>::infinity();
+    if (num_attempts > MIN_NUM_ATTEMPTS_TO_USE_TWO_ATTEMPT_ENTROPY &&
+        remaining_words.num_words >
+            max_entropy_place_to_consider_computing_two_attempt_entropy) {
+      double min_entropy_to_consider_computing_two_attempt_entropy =
+          max_candidate_entropy - max_entropy_difference_to_consider;
+      if (remaining_words.num_words >
+          max_entropy_place_to_consider_computing_two_attempt_entropy) {
+        double max_place_entropy = find_metric_at_place(
+            remaining_words.num_words, heuristics,
+            max_entropy_place_to_consider_computing_two_attempt_entropy,
+            [](const candidate_heuristic& heuristics) -> double {
+              return heuristics.entropy;
+            });
+        min_entropy_to_consider_computing_two_attempt_entropy =
+            std::max(min_entropy_to_consider_computing_two_attempt_entropy,
+                     max_place_entropy);
+      }
+
+      int num_candidates_with_two_attempt_entropy_computed = 0;
+      double max_candidate_two_attempt_entropy = 0.0;
+      for (int i = 0; i < remaining_words.num_words; i++) {
+        candidate_heuristic& heuristic = heuristics[i];
+        if (heuristic.entropy >= min_entropy_to_consider) {
+          continue;
+        }
+        if (heuristic.entropy <
+            min_entropy_to_consider_computing_two_attempt_entropy) {
+          continue;
+        }
+        num_candidates_with_two_attempt_entropy_computed++;
+        double next_attempt_entropy = compute_next_attempt_entropy(
+            bank, remaining_words, heuristic.candidate);
+        heuristic.two_attempt_entropy =
+            heuristic.entropy + next_attempt_entropy;
+        max_candidate_two_attempt_entropy = std::max(
+            max_candidate_two_attempt_entropy, heuristic.two_attempt_entropy);
+      }
+      double max_place_two_attempt_entropy = find_metric_at_place(
+          remaining_words.num_words, heuristics,
+          std::min(num_candidates_with_two_attempt_entropy_computed,
+                   max_entropy_place_to_consider),
+          [](const candidate_heuristic& heuristic) -> double {
+            return heuristic.two_attempt_entropy;
+          });
+      min_two_attempt_entropy_to_consider =
+          std::max(max_candidate_two_attempt_entropy -
+                       max_entropy_difference_to_consider,
+                   max_place_two_attempt_entropy);
     }
 
     out_candidates.num_words = 0;
     out_candidates.num_targets = 0;
     for (int i = 0; i < remaining_words.num_words; i++) {
       const candidate_heuristic& heuristic = heuristics[i];
-      if (heuristic.entropy < min_entropy_to_consider) {
+      if (heuristic.entropy < min_entropy_to_consider &&
+          heuristic.two_attempt_entropy < min_two_attempt_entropy_to_consider) {
         continue;
       }
       out_candidates.words[out_candidates.num_words] = heuristic.candidate;
