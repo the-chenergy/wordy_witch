@@ -88,15 +88,12 @@ int main() {
         [&bank,
          &remaining_words](wordy_witch::candidate_info candidate) -> void {
           WORDY_WITCH_TRACE("Analyzed verdict remaining_words", candidate.guess,
-                            candidate.performance.total_attempts,
-                            candidate.performance.has_missed_targets);
+                            candidate.cost);
           wordy_witch::guess_heuristic heuristic =
               wordy_witch::compute_guess_heuristic(bank, remaining_words,
                                                    candidate.guess);
-          std::cout << bank.words[candidate.guess] << "\t"
-                    << candidate.performance.total_attempts << "\t"
-                    << candidate.performance.total_attempts * 1.0 /
-                           remaining_words.num_targets
+          std::cout << bank.words[candidate.guess] << "\t" << candidate.cost
+                    << "\t" << candidate.cost / remaining_words.num_targets
                     << "\t" << heuristic.entropy << "\t"
                     << heuristic.num_verdict_groups_with_targets << "\t"
                     << heuristic.num_targets_in_largest_verdict_group << "\t"
@@ -111,9 +108,8 @@ int main() {
               << bank.words[best_guess.guess]
               << " (GL: " << remaining_words.num_words
               << ", TL: " << remaining_words.num_targets
-              << ", Cost: " << best_guess.performance.total_attempts << ", EA: "
-              << best_guess.performance.total_attempts * 1.0 /
-                     remaining_words.num_targets
+              << ", Cost: " << best_guess.cost
+              << ", EA: " << best_guess.cost / remaining_words.num_targets
               << ")" << std::endl;
   };
 
@@ -152,15 +148,14 @@ int main() {
     std::cout << "VID\tLG\tV\tNG\tGL\tTL\tCost\tEA\tH\tNVG\tLVG" << std::endl;
 
     int guess = wordy_witch::find_word(bank, prev_guess).value();
-    wordy_witch::performance_info performance = wordy_witch::evaluate_guess(
+    double cost = wordy_witch::evaluate_guess(
         bank, bot_cache, wordy_witch::MAX_NUM_ATTEMPTS_ALLOWED,
         num_attempts_used, remaining_words, guess,
         [&bank, &prev_guess](int verdict,
                              const wordy_witch::word_list& verdict_group,
                              wordy_witch::candidate_info best_guess) -> void {
           WORDY_WITCH_TRACE("Analyzed candidate", verdict, best_guess.guess,
-                            best_guess.performance.total_attempts,
-                            best_guess.performance.has_missed_targets);
+                            best_guess.cost);
           wordy_witch::guess_heuristic heuristic =
               wordy_witch::compute_guess_heuristic(bank, verdict_group,
                                                    best_guess.guess);
@@ -168,10 +163,8 @@ int main() {
                     << wordy_witch::format_verdict(verdict) << "\t"
                     << bank.words[best_guess.guess] << "\t"
                     << verdict_group.num_words << "\t"
-                    << verdict_group.num_targets << "\t"
-                    << best_guess.performance.total_attempts << "\t"
-                    << best_guess.performance.total_attempts * 1.0 /
-                           verdict_group.num_targets
+                    << verdict_group.num_targets << "\t" << best_guess.cost
+                    << "\t" << best_guess.cost / verdict_group.num_targets
                     << "\t" << heuristic.entropy << "\t"
                     << heuristic.num_verdict_groups_with_targets << "\t"
                     << heuristic.num_targets_in_largest_verdict_group
@@ -185,11 +178,10 @@ int main() {
               << " (H: " << heuristic.entropy
               << ", NVG: " << heuristic.num_verdict_groups_with_targets
               << ", LVG: " << heuristic.num_targets_in_largest_verdict_group
-              << ") produces a mean of "
-              << performance.total_attempts * 1.0 / remaining_words.num_targets
+              << ") produces a mean of " << cost / remaining_words.num_targets
               << " attempts per Wordle game (GL: " << remaining_words.num_words
-              << ", TL: " << remaining_words.num_targets
-              << ", Cost: " << performance.total_attempts << ")" << std::endl;
+              << ", TL: " << remaining_words.num_targets << ", Cost: " << cost
+              << ")" << std::endl;
   };
 
   if (state.size() % 2 == 0) {
