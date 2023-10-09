@@ -52,8 +52,7 @@ int main() {
   };
   display_initial_message_and_parse_state(remaining_words, bank, state);
 
-  static wordy_witch::bot_cache bot_cache;
-  wordy_witch::reset_cache(bot_cache);
+  static wordy_witch::bot_cache bot_cache = {};
 
   auto find_and_display_best_guess =
       [](const wordy_witch::word_bank& bank, int num_attempts_used,

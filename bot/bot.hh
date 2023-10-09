@@ -322,7 +322,8 @@ using find_best_guess_by_word_list_cache =
 
 struct bot_cache {
   find_best_guess_by_word_list_cache
-      find_best_guess_cache_by_attempts_used[MAX_NUM_ATTEMPTS_ALLOWED];
+      find_best_guess_cache_by_attempts_allowed_and_used
+          [MAX_NUM_ATTEMPTS_ALLOWED][MAX_NUM_ATTEMPTS_ALLOWED];
 };
 
 using find_best_guess_callback_for_candidate =
@@ -482,7 +483,8 @@ candidate_info find_best_guess(
 
   word_list_hash remaining_words_hash = hash_word_list(remaining_words);
   find_best_guess_by_word_list_cache& result_cache =
-      cache.find_best_guess_cache_by_attempts_used[num_attempts_used];
+      cache.find_best_guess_cache_by_attempts_allowed_and_used
+          [num_attempts_allowed - 1][num_attempts_used];
   if (auto it = result_cache.find(remaining_words_hash);
       it != result_cache.end()) {
     return it->second;
@@ -651,13 +653,6 @@ candidate_info find_best_guess(
 
   result_cache[remaining_words_hash] = best_guess;
   return best_guess;
-}
-
-void reset_cache(bot_cache& cache) {
-  for (find_best_guess_by_word_list_cache& cache :
-       cache.find_best_guess_cache_by_attempts_used) {
-    cache.clear();
-  }
 }
 
 #pragma endregion
