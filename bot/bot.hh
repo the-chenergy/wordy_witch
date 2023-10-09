@@ -411,7 +411,7 @@ double compute_next_attempt_entropy(const word_bank& bank,
   group_remaining_words(groups, bank, remaining_words, guess, true);
   double entropy = 0.0;
   for (word_list& group : groups) {
-    if (group.num_targets <= 1) {
+    if (group.num_targets == 0) {
       continue;
     }
     double group_probability =
@@ -466,8 +466,10 @@ candidate_info find_best_guess(
                             int num_attempts,
                             const word_list& remaining_words) -> void {
     constexpr int MIN_NUM_ATTEMPTS_TO_USE_TWO_ATTEMPT_ENTROPY = 4;
-    int max_entropy_place_to_consider =
-        num_attempts >= MIN_NUM_ATTEMPTS_TO_USE_TWO_ATTEMPT_ENTROPY ? 16 : 8;
+    int max_entropy_place_to_consider = 16;
+    if (num_attempts < MIN_NUM_ATTEMPTS_TO_USE_TWO_ATTEMPT_ENTROPY) {
+      max_entropy_place_to_consider /= 2;
+    }
     double max_entropy_difference_to_consider = 1.0;
 
     struct candidate_heuristic {
@@ -518,8 +520,11 @@ candidate_info find_best_guess(
           std::max(min_entropy_to_consider, max_place_entropy);
     }
 
-    int max_entropy_place_to_consider_computing_two_attempt_entropy =
-        remaining_words.num_targets;
+    int max_entropy_place_to_consider_computing_two_attempt_entropy = std::min({
+        remaining_words.num_words,
+        remaining_words.num_targets * 4,
+        16 * max_entropy_place_to_consider,
+    });
     double min_two_attempt_entropy_to_consider =
         std::numeric_limits<double>::infinity();
     if (num_attempts > MIN_NUM_ATTEMPTS_TO_USE_TWO_ATTEMPT_ENTROPY &&
