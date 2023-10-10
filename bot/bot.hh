@@ -347,16 +347,11 @@ double evaluate_guess(
     int num_attempts_used, const word_list& remaining_words, int guess,
     evaluate_guess_callback_for_verdict_group callback_for_verdict_group = {},
     guess_cost_function get_guess_cost = get_flat_guess_cost) {
-  if (remaining_words.num_targets == 1) {
-    if (guess == remaining_words.words[0]) {
-      return get_guess_cost(num_attempts_used);
-    }
-  } else if (remaining_words.num_targets == 2) {
-    if (guess == remaining_words.words[0] ||
-        guess == remaining_words.words[1]) {
-      return get_guess_cost(num_attempts_used) +
-             get_guess_cost(num_attempts_used + 1);
-    }
+  if (remaining_words.num_targets == 1 && guess == remaining_words.words[0]) {
+    return get_guess_cost(num_attempts_used);
+  }
+  if (num_attempts_used == num_attempts_allowed) {
+    return INFINITE_COST;
   }
 
   static verdict_groups
@@ -375,21 +370,6 @@ double evaluate_guess(
       continue;
     }
     if (group.num_targets == 0) {
-      continue;
-    }
-    if (group.num_targets >= remaining_words.num_targets - 1) {
-      /*
-        This guess only eliminated at most one of the remaining targets.
-        Assuming it was the best guess, this means from this point on we have no
-        better strategy than trial-and-error, guessing one target at a time for
-        the rest of this game.
-      */
-      if (group.num_targets > num_attempts_allowed - num_attempts_used) {
-        return INFINITE_COST;
-      }
-      for (int i = 1; i <= group.num_targets; i++) {
-        cost += get_guess_cost(num_attempts_used + i);
-      }
       continue;
     }
 
@@ -660,6 +640,7 @@ candidate_info find_best_guess(
 
 struct strategy {
   int guess;
+  bool can_guess_be_target;
   int num_remaining_words;
   int num_remaining_targets;
   std::unordered_map<int, std::optional<strategy>> follow_ups_by_verdict;
@@ -668,13 +649,19 @@ struct strategy {
 std::optional<strategy> find_best_strategy(
     const word_bank& bank, bot_cache& cache, int num_attempts_allowed,
     int num_attempts_used, const word_list& remaining_words,
-    std::optional<int> forced_first_guess = std::nullopt) {
+    std::optional<int> forced_first_guess = std::nullopt,
+    guess_cost_function get_guess_cost = get_flat_guess_cost) {
   int first_guess;
   if (forced_first_guess.has_value()) {
     first_guess = forced_first_guess.value();
+    double cost =
+        evaluate_guess(bank, cache, num_attempts_allowed, num_attempts_used + 1,
+                       remaining_words, first_guess, nullptr, get_guess_cost);
+    assert(cost < INFINITE_COST);
   } else {
-    candidate_info best_guess = find_best_guess(
-        bank, cache, num_attempts_allowed, num_attempts_used, remaining_words);
+    candidate_info best_guess =
+        find_best_guess(bank, cache, num_attempts_allowed, num_attempts_used,
+                        remaining_words, nullptr, get_guess_cost);
     if (best_guess.cost >= INFINITE_COST) {
       return std::nullopt;
     }
@@ -686,20 +673,24 @@ std::optional<strategy> find_best_strategy(
       .num_remaining_words = remaining_words.num_words,
       .num_remaining_targets = remaining_words.num_targets,
   };
-  if (remaining_words.num_targets == 1) {
-    return best_strategy;
-  }
-
-  auto callback_for_verdict_group =
-      [&bank, &cache, num_attempts_allowed, num_attempts_used, &best_strategy](
-          int verdict, const word_list& verdict_group,
-          candidate_info best_follow_up) -> void {
+  int num_targets_seen = 0;
+  auto record_best_follow_up_for_verdict_group =
+      [&bank, &cache, num_attempts_allowed, num_attempts_used, &get_guess_cost,
+       &best_strategy,
+       &num_targets_seen](int verdict, const word_list& verdict_group,
+                          candidate_info best_follow_up) -> void {
+    num_targets_seen += verdict_group.num_targets;
     best_strategy.follow_ups_by_verdict[verdict] = find_best_strategy(
         bank, cache, num_attempts_allowed, num_attempts_used + 1, verdict_group,
-        best_follow_up.guess);
+        best_follow_up.guess, get_guess_cost);
   };
   evaluate_guess(bank, cache, num_attempts_allowed, num_attempts_used + 1,
-                 remaining_words, first_guess, callback_for_verdict_group);
+                 remaining_words, first_guess,
+                 record_best_follow_up_for_verdict_group, get_guess_cost);
+
+  if (num_targets_seen == remaining_words.num_targets - 1) {
+    best_strategy.can_guess_be_target = true;
+  }
   return best_strategy;
 }
 

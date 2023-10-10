@@ -14,6 +14,8 @@ int main() {
   std::vector<std::string> state = {
       "LEAST",
   };
+  wordy_witch::guess_cost_function get_guess_cost;
+  get_guess_cost = wordy_witch::get_flat_guess_cost;
 
   static wordy_witch::word_list remaining_words;
   remaining_words.num_words = bank.num_words;
@@ -56,17 +58,19 @@ int main() {
 
   auto find_and_display_best_guess =
       [](const wordy_witch::word_bank& bank, int num_attempts_used,
-         const wordy_witch::word_list& remaining_words) -> void {
+         const wordy_witch::word_list& remaining_words,
+         wordy_witch::guess_cost_function get_guess_cost) -> void {
     std::cout << "Candidate best guesses in this board state:" << std::endl;
     std::cout << "(Guess: a candidate best guess in this board state, after "
                  "basic pruning by entropy)"
               << std::endl;
-    std::cout << "(Cost: total number of attempts to win every remaining "
-                 "possible Wordle game, under best play after guessing this "
-                 "word, or 0 if this guess resulting losing a Wordle even "
-                 "under best play)"
+    std::cout << "(Cost: total cost to win every remaining possible Wordle "
+                 "game, under best play after guessing this word, or `inf` if "
+                 "this guess results in losing at least one Wordle even under "
+                 "best play)"
               << std::endl;
-    std::cout << "(EA: expected attempts; `Cost` divided by the number of "
+    std::cout << "(EC: the expect cost for a possible remaining Wordle game; "
+                 "this is equal to `Cost` divided by the number of "
                  "remaining possible target words)"
               << std::endl;
     std::cout << "(H: the Shannon entropy of this guess)" << std::endl;
@@ -79,28 +83,30 @@ int main() {
     std::cout << "(H2: the expected entropy produced by guessing this word and "
                  "the best next guess)"
               << std::endl;
-    std::cout << "Guess\tCost\tEA\tH\tNVG\tLVG\tH2" << std::endl;
+    std::cout << "Guess\tCost\tEC\tH\tNVG\tLVG\tH2" << std::endl;
 
-    wordy_witch::candidate_info best_guess = wordy_witch::find_best_guess(
-        bank, bot_cache, wordy_witch::MAX_NUM_ATTEMPTS_ALLOWED,
-        num_attempts_used, remaining_words,
+    auto display_candidate_info =
         [&bank,
          &remaining_words](wordy_witch::candidate_info candidate) -> void {
-          WORDY_WITCH_TRACE("Analyzed verdict remaining_words", candidate.guess,
-                            candidate.cost);
-          wordy_witch::guess_heuristic heuristic =
-              wordy_witch::compute_guess_heuristic(bank, remaining_words,
-                                                   candidate.guess);
-          std::cout << bank.words[candidate.guess] << "\t" << candidate.cost
-                    << "\t" << candidate.cost / remaining_words.num_targets
-                    << "\t" << heuristic.entropy << "\t"
-                    << heuristic.num_verdict_groups_with_targets << "\t"
-                    << heuristic.num_targets_in_largest_verdict_group << "\t"
-                    << heuristic.entropy +
-                           wordy_witch::compute_next_attempt_entropy(
-                               bank, remaining_words, candidate.guess)
-                    << std::endl;
-        });
+      WORDY_WITCH_TRACE("Analyzed verdict remaining_words", candidate.guess,
+                        candidate.cost);
+      wordy_witch::guess_heuristic heuristic =
+          wordy_witch::compute_guess_heuristic(bank, remaining_words,
+                                               candidate.guess);
+      std::cout << bank.words[candidate.guess] << "\t" << candidate.cost << "\t"
+                << candidate.cost / remaining_words.num_targets << "\t"
+                << heuristic.entropy << "\t"
+                << heuristic.num_verdict_groups_with_targets << "\t"
+                << heuristic.num_targets_in_largest_verdict_group << "\t"
+                << heuristic.entropy +
+                       wordy_witch::compute_next_attempt_entropy(
+                           bank, remaining_words, candidate.guess)
+                << std::endl;
+    };
+    wordy_witch::candidate_info best_guess = wordy_witch::find_best_guess(
+        bank, bot_cache, wordy_witch::MAX_NUM_ATTEMPTS_ALLOWED,
+        num_attempts_used, remaining_words, display_candidate_info,
+        get_guess_cost);
     std::cout << std::endl;
 
     std::cout << "Best guess in the input board state: "
@@ -108,14 +114,15 @@ int main() {
               << " (GL: " << remaining_words.num_words
               << ", TL: " << remaining_words.num_targets
               << ", Cost: " << best_guess.cost
-              << ", EA: " << best_guess.cost / remaining_words.num_targets
+              << ", EC: " << best_guess.cost / remaining_words.num_targets
               << ")" << std::endl;
   };
 
   auto find_and_display_best_guess_by_verdict =
       [](const wordy_witch::word_bank& bank, int num_attempts_used,
          const wordy_witch::word_list& remaining_words,
-         const std::string& prev_guess) -> void {
+         const std::string& prev_guess,
+         wordy_witch::guess_cost_function get_guess_cost) -> void {
     std::cout << "Best guesses in this board state for each possible verdict:"
               << std::endl;
     std::cout << "(VID: a base-3 encoded number of this verdict)" << std::endl;
@@ -129,13 +136,14 @@ int main() {
     std::cout << "(TL: the number of possible target words left after this "
                  "verdict shows)"
               << std::endl;
-    std::cout << "(Cost: total number of attempts to win every remaining "
-                 "possible Wordle game, under best play after guessing this "
-                 "word, or 0 if this guess resulting losing a Wordle even "
-                 "under best play)"
+    std::cout << "(Cost: total cost to win every remaining possible Wordle "
+                 "game, under best play after guessing this word, or `inf` if "
+                 "this guess results in losing at least one Wordle even under "
+                 "best play)"
               << std::endl;
-    std::cout << "(EA: expected attempts; `Cost` divided by the number of "
-                 "remaining possible target words after this verdict)"
+    std::cout << "(EC: the expect cost for a possible remaining Wordle game; "
+                 "this is equal to `Cost` divided by the number of "
+                 "remaining possible target words)"
               << std::endl;
     std::cout << "(H: the Shannon entropy of the best guess)" << std::endl;
     std::cout << "(NVG: the number of verdict groups the best produces)"
@@ -144,31 +152,32 @@ int main() {
         << "(LVG: the number of possible target words in the largest verdict "
            "remaining_words after guessing the best guess)"
         << std::endl;
-    std::cout << "VID\tLG\tV\tNG\tGL\tTL\tCost\tEA\tH\tNVG\tLVG" << std::endl;
+    std::cout << "VID\tLG\tV\tNG\tGL\tTL\tCost\tEC\tH\tNVG\tLVG" << std::endl;
 
     int guess = wordy_witch::find_word(bank, prev_guess).value();
-    double cost = wordy_witch::evaluate_guess(
-        bank, bot_cache, wordy_witch::MAX_NUM_ATTEMPTS_ALLOWED,
-        num_attempts_used, remaining_words, guess,
+    auto display_best_guess_for_verdict_group =
         [&bank, &prev_guess](int verdict,
                              const wordy_witch::word_list& verdict_group,
                              wordy_witch::candidate_info best_guess) -> void {
-          WORDY_WITCH_TRACE("Analyzed candidate", verdict, best_guess.guess,
-                            best_guess.cost);
-          wordy_witch::guess_heuristic heuristic =
-              wordy_witch::compute_guess_heuristic(bank, verdict_group,
-                                                   best_guess.guess);
-          std::cout << verdict << "\t" << prev_guess << "\t"
-                    << wordy_witch::format_verdict(verdict) << "\t"
-                    << bank.words[best_guess.guess] << "\t"
-                    << verdict_group.num_words << "\t"
-                    << verdict_group.num_targets << "\t" << best_guess.cost
-                    << "\t" << best_guess.cost / verdict_group.num_targets
-                    << "\t" << heuristic.entropy << "\t"
-                    << heuristic.num_verdict_groups_with_targets << "\t"
-                    << heuristic.num_targets_in_largest_verdict_group
-                    << std::endl;
-        });
+      WORDY_WITCH_TRACE("Analyzed candidate", verdict, best_guess.guess,
+                        best_guess.cost);
+      wordy_witch::guess_heuristic heuristic =
+          wordy_witch::compute_guess_heuristic(bank, verdict_group,
+                                               best_guess.guess);
+      std::cout << verdict << "\t" << prev_guess << "\t"
+                << wordy_witch::format_verdict(verdict) << "\t"
+                << bank.words[best_guess.guess] << "\t"
+                << verdict_group.num_words << "\t" << verdict_group.num_targets
+                << "\t" << best_guess.cost << "\t"
+                << best_guess.cost / verdict_group.num_targets << "\t"
+                << heuristic.entropy << "\t"
+                << heuristic.num_verdict_groups_with_targets << "\t"
+                << heuristic.num_targets_in_largest_verdict_group << std::endl;
+    };
+    double cost = wordy_witch::evaluate_guess(
+        bank, bot_cache, wordy_witch::MAX_NUM_ATTEMPTS_ALLOWED,
+        num_attempts_used, remaining_words, guess,
+        display_best_guess_for_verdict_group, get_guess_cost);
     std::cout << std::endl;
 
     wordy_witch::guess_heuristic heuristic =
@@ -177,31 +186,51 @@ int main() {
               << " (H: " << heuristic.entropy
               << ", NVG: " << heuristic.num_verdict_groups_with_targets
               << ", LVG: " << heuristic.num_targets_in_largest_verdict_group
-              << ") produces a mean of " << cost / remaining_words.num_targets
-              << " attempts per Wordle game (GL: " << remaining_words.num_words
+              << ") produces a mean cost of "
+              << cost / remaining_words.num_targets
+              << " per Wordle game (GL: " << remaining_words.num_words
               << ", TL: " << remaining_words.num_targets << ", Cost: " << cost
               << ")" << std::endl;
   };
 
+  if (state.size() % 2 == 0) {
+    find_and_display_best_guess(bank, state.size() / 2, remaining_words,
+                                get_guess_cost);
+  } else {
+    find_and_display_best_guess_by_verdict(bank, state.size() / 2 + 1,
+                                           remaining_words, state.back(),
+                                           get_guess_cost);
+  }
+  std::cout << std::endl;
+
   auto find_and_display_best_strategy =
       [](const wordy_witch::word_bank& bank, int num_attempts_used,
          const wordy_witch::word_list& remaining_words,
-         std::optional<int> prev_guess) -> void {
+         std::optional<int> prev_guess,
+         wordy_witch::guess_cost_function get_guess_cost) -> void {
     wordy_witch::strategy strategy =
         wordy_witch::find_best_strategy(
             bank, bot_cache, wordy_witch::MAX_NUM_ATTEMPTS_ALLOWED,
-            num_attempts_used, remaining_words, prev_guess)
+            num_attempts_used, remaining_words, prev_guess, get_guess_cost)
             .value();
+
+    int num_targets_solved_by_attempts_used
+        [wordy_witch::MAX_NUM_ATTEMPTS_ALLOWED + 1] = {};
 
     std::cout << "Best guess in every possible scenario:";
     std::function<void(const wordy_witch::word_bank&, wordy_witch::strategy,
                        int)>
-        display_strategy =
-            [&display_strategy](const wordy_witch::word_bank& bank,
-                                wordy_witch::strategy strategy,
-                                int indent_level) -> void {
+        display_strategy = [&display_strategy, num_attempts_used,
+                            &num_targets_solved_by_attempts_used](
+                               const wordy_witch::word_bank& bank,
+                               wordy_witch::strategy strategy,
+                               int indent_level) -> void {
       if (indent_level > 0) {
         std::cout << bank.words[strategy.guess];
+      }
+      if (strategy.can_guess_be_target) {
+        num_targets_solved_by_attempts_used[num_attempts_used + 1 +
+                                            indent_level]++;
       }
       for (int verdict = wordy_witch::NUM_VERDICTS; verdict >= 0; verdict--) {
         if (strategy.follow_ups_by_verdict.count(verdict) == 0) {
@@ -217,19 +246,27 @@ int main() {
     };
     display_strategy(bank, strategy, 0);
     std::cout << std::endl;
+    std::cout << std::endl;
+
+    int total_num_attempts_used = 0;
+    for (int i = 1; i <= wordy_witch::MAX_NUM_ATTEMPTS_ALLOWED; i++) {
+      total_num_attempts_used += i * num_targets_solved_by_attempts_used[i];
+    }
+
+    std::cout << "Overall, the best strategy produces a mean of "
+              << total_num_attempts_used * 1.0 / remaining_words.num_targets
+              << " attempts per Wordle game (total attempts: "
+              << total_num_attempts_used << ", attempt distribution:";
+    for (int i = 1; i <= wordy_witch::MAX_NUM_ATTEMPTS_ALLOWED; i++) {
+      std::cout << " " << num_targets_solved_by_attempts_used[i];
+    }
+    std::cout << ")" << std::endl;
   };
 
-  if (state.size() % 2 == 0) {
-    find_and_display_best_guess(bank, state.size() / 2, remaining_words);
-  } else {
-    find_and_display_best_guess_by_verdict(bank, state.size() / 2 + 1,
-                                           remaining_words, state.back());
+  std::optional<int> prev_guess;
+  if (state.size() % 2 == 1) {
+    prev_guess = wordy_witch::find_word(bank, state.back()).value();
   }
-  std::cout << std::endl;
-
-  find_and_display_best_strategy(
-      bank, state.size() / 2, remaining_words,
-      state.size() % 2 == 0
-          ? std::nullopt
-          : std::optional{wordy_witch::find_word(bank, state.back()).value()});
+  find_and_display_best_strategy(bank, state.size() / 2, remaining_words,
+                                 prev_guess, get_guess_cost);
 }
