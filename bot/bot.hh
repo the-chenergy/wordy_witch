@@ -326,13 +326,18 @@ struct bot_cache {
           [MAX_NUM_ATTEMPTS_ALLOWED][MAX_NUM_ATTEMPTS_ALLOWED];
 };
 
+using guess_cost_function = std::function<double(int num_attempts_used)>;
+
+double get_flat_guess_cost(int num_attempts_used) { return num_attempts_used; }
+
 using find_best_guess_callback_for_candidate =
     std::function<void(candidate_info candidate)>;
 
 candidate_info find_best_guess(
     const word_bank& bank, bot_cache& cache, int num_attempts_allowed,
     int num_attempts_used, const word_list& remaining_words,
-    find_best_guess_callback_for_candidate callback_for_candidate);
+    find_best_guess_callback_for_candidate callback_for_candidate,
+    guess_cost_function get_guess_cost);
 
 using evaluate_guess_callback_for_verdict_group = std::function<void(
     int verdict, const word_list& verdict_group, candidate_info best_guess)>;
@@ -340,15 +345,17 @@ using evaluate_guess_callback_for_verdict_group = std::function<void(
 double evaluate_guess(
     const word_bank& bank, bot_cache& cache, int num_attempts_allowed,
     int num_attempts_used, const word_list& remaining_words, int guess,
-    evaluate_guess_callback_for_verdict_group callback_for_verdict_group = {}) {
+    evaluate_guess_callback_for_verdict_group callback_for_verdict_group = {},
+    guess_cost_function get_guess_cost = get_flat_guess_cost) {
   if (remaining_words.num_targets == 1) {
     if (guess == remaining_words.words[0]) {
-      return 1.0 * num_attempts_used;
+      return get_guess_cost(num_attempts_used);
     }
   } else if (remaining_words.num_targets == 2) {
     if (guess == remaining_words.words[0] ||
         guess == remaining_words.words[1]) {
-      return 1.0 * num_attempts_used + (num_attempts_used + 1.0);
+      return get_guess_cost(num_attempts_used) +
+             get_guess_cost(num_attempts_used + 1);
     }
   }
 
@@ -363,7 +370,7 @@ double evaluate_guess(
     const word_list& group = groups[verdict];
     if (verdict == ALL_GREEN_VERDICT) {
       if (group.num_targets == 1) {
-        cost += 1.0 * num_attempts_used;
+        cost += get_guess_cost(num_attempts_used);
       }
       continue;
     }
@@ -381,13 +388,14 @@ double evaluate_guess(
         return INFINITE_COST;
       }
       for (int i = 1; i <= group.num_targets; i++) {
-        cost += 1.0 * num_attempts_used + i;
+        cost += get_guess_cost(num_attempts_used + i);
       }
       continue;
     }
 
-    candidate_info best_guess = find_best_guess(
-        bank, cache, num_attempts_allowed, num_attempts_used, group, {});
+    candidate_info best_guess =
+        find_best_guess(bank, cache, num_attempts_allowed, num_attempts_used,
+                        group, {}, get_guess_cost);
     if (callback_for_verdict_group) {
       callback_for_verdict_group(verdict, group, best_guess);
     }
@@ -428,7 +436,7 @@ guess_heuristic compute_guess_heuristic(const word_bank& bank,
     heuristic.entropy += -std::log2(group_probability) * group_probability;
   }
   return heuristic;
-};
+}
 
 double compute_next_attempt_entropy(const word_bank& bank,
                                     const word_list& remaining_words,
@@ -455,16 +463,17 @@ double compute_next_attempt_entropy(const word_bank& bank,
     entropy += group_probability * best_next_entropy;
   }
   return entropy;
-};
+}
 
 candidate_info find_best_guess(
     const word_bank& bank, bot_cache& cache, int num_attempts_allowed,
     int num_attempts_used, const word_list& remaining_words,
-    find_best_guess_callback_for_candidate callback_for_candidate = {}) {
+    find_best_guess_callback_for_candidate callback_for_candidate = {},
+    guess_cost_function get_guess_cost = get_flat_guess_cost) {
   if (remaining_words.num_targets == 1) {
     return candidate_info{
         .guess = remaining_words.words[0],
-        .cost = num_attempts_used + 1.0,
+        .cost = get_guess_cost(num_attempts_used + 1),
     };
   }
   if (num_attempts_used == num_attempts_allowed - 1) {
@@ -476,7 +485,8 @@ candidate_info find_best_guess(
   if (remaining_words.num_targets == 2) {
     return candidate_info{
         .guess = remaining_words.words[0],
-        .cost = (num_attempts_used + 1.0) + (num_attempts_used + 2.0),
+        .cost = get_guess_cost(num_attempts_used + 1) +
+                get_guess_cost(num_attempts_used + 2),
     };
   }
 
@@ -629,7 +639,7 @@ candidate_info find_best_guess(
     int guess = candidates.words[i];
     double cost =
         evaluate_guess(bank, cache, num_attempts_allowed, num_attempts_used + 1,
-                       remaining_words, guess, {});
+                       remaining_words, guess, {}, get_guess_cost);
     if (callback_for_candidate) {
       callback_for_candidate(candidate_info{
           .guess = guess,
@@ -663,8 +673,8 @@ std::optional<strategy> find_best_strategy(
   if (forced_first_guess.has_value()) {
     first_guess = forced_first_guess.value();
   } else {
-    auto best_guess = find_best_guess(bank, cache, num_attempts_allowed,
-                                      num_attempts_used, remaining_words);
+    candidate_info best_guess = find_best_guess(
+        bank, cache, num_attempts_allowed, num_attempts_used, remaining_words);
     if (best_guess.cost >= INFINITE_COST) {
       return std::nullopt;
     }

@@ -13,8 +13,6 @@ int main() {
                          wordy_witch::word_bank_guesses_inclusion::ALL_WORDS);
   std::vector<std::string> state = {
       "LEAST",
-      "-----",
-      "CRUMP",
   };
 
   static wordy_witch::word_list remaining_words;
