@@ -331,17 +331,16 @@ using find_best_guess_callback_for_candidate =
 
 candidate_info find_best_guess(
     const word_bank& bank, bot_cache& cache, int num_attempts_allowed,
-    int num_attempts_used, const word_list& verdict_group,
+    int num_attempts_used, const word_list& remaining_words,
     find_best_guess_callback_for_candidate callback_for_candidate);
 
-using evaluate_guess_callback_for_group = std::function<void(
-    int verdict, const word_list& group, candidate_info best_guess)>;
+using evaluate_guess_callback_for_verdict_group = std::function<void(
+    int verdict, const word_list& verdict_group, candidate_info best_guess)>;
 
-double evaluate_guess(const word_bank& bank, bot_cache& cache,
-                      int num_attempts_allowed, int num_attempts_used,
-                      const word_list& remaining_words, int guess,
-                      evaluate_guess_callback_for_group callback_for_group = {},
-                      int max_num_missed_targets_allowed = 0) {
+double evaluate_guess(
+    const word_bank& bank, bot_cache& cache, int num_attempts_allowed,
+    int num_attempts_used, const word_list& remaining_words, int guess,
+    evaluate_guess_callback_for_verdict_group callback_for_verdict_group = {}) {
   if (remaining_words.num_targets == 1) {
     if (guess == remaining_words.words[0]) {
       return 1.0 * num_attempts_used;
@@ -389,8 +388,8 @@ double evaluate_guess(const word_bank& bank, bot_cache& cache,
 
     candidate_info best_guess = find_best_guess(
         bank, cache, num_attempts_allowed, num_attempts_used, group, {});
-    if (callback_for_group) {
-      callback_for_group(verdict, group, best_guess);
+    if (callback_for_verdict_group) {
+      callback_for_verdict_group(verdict, group, best_guess);
     }
     if (best_guess.cost >= INFINITE_COST) {
       return INFINITE_COST;
@@ -461,7 +460,7 @@ double compute_next_attempt_entropy(const word_bank& bank,
 candidate_info find_best_guess(
     const word_bank& bank, bot_cache& cache, int num_attempts_allowed,
     int num_attempts_used, const word_list& remaining_words,
-    find_best_guess_callback_for_candidate callback_for_candidate) {
+    find_best_guess_callback_for_candidate callback_for_candidate = {}) {
   if (remaining_words.num_targets == 1) {
     return candidate_info{
         .guess = remaining_words.words[0],
@@ -503,7 +502,6 @@ candidate_info find_best_guess(
 
     struct candidate_heuristic {
       int candidate;
-      bool is_target;
       int num_targets_in_largest_group;
       double entropy;
       double two_attempt_entropy;
@@ -516,7 +514,6 @@ candidate_info find_best_guess(
           compute_guess_heuristic(bank, remaining_words, candidate);
       heuristics[i] = {
           .candidate = candidate,
-          .is_target = candidate < remaining_words.num_targets,
           .num_targets_in_largest_group =
               heuristic.num_targets_in_largest_verdict_group,
           .entropy = heuristic.entropy,
@@ -608,7 +605,6 @@ candidate_info find_best_guess(
     }
 
     out_candidates.num_words = 0;
-    out_candidates.num_targets = 0;
     for (int i = 0; i < remaining_words.num_words; i++) {
       const candidate_heuristic& heuristic = heuristics[i];
       if (heuristic.entropy < min_entropy_to_consider &&
@@ -617,9 +613,6 @@ candidate_info find_best_guess(
       }
       out_candidates.words[out_candidates.num_words] = heuristic.candidate;
       out_candidates.num_words++;
-      if (heuristic.is_target) {
-        out_candidates.num_targets++;
-      }
     }
   };
   static word_list
@@ -653,6 +646,51 @@ candidate_info find_best_guess(
 
   result_cache[remaining_words_hash] = best_guess;
   return best_guess;
+}
+
+struct strategy {
+  int guess;
+  int num_remaining_words;
+  int num_remaining_targets;
+  std::unordered_map<int, std::optional<strategy>> follow_ups_by_verdict;
+};
+
+std::optional<strategy> find_best_strategy(
+    const word_bank& bank, bot_cache& cache, int num_attempts_allowed,
+    int num_attempts_used, const word_list& remaining_words,
+    std::optional<int> forced_first_guess = std::nullopt) {
+  int first_guess;
+  if (forced_first_guess.has_value()) {
+    first_guess = forced_first_guess.value();
+  } else {
+    auto best_guess = find_best_guess(bank, cache, num_attempts_allowed,
+                                      num_attempts_used, remaining_words);
+    if (best_guess.cost >= INFINITE_COST) {
+      return std::nullopt;
+    }
+    first_guess = best_guess.guess;
+  }
+
+  strategy best_strategy = {
+      .guess = first_guess,
+      .num_remaining_words = remaining_words.num_words,
+      .num_remaining_targets = remaining_words.num_targets,
+  };
+  if (remaining_words.num_targets == 1) {
+    return best_strategy;
+  }
+
+  auto callback_for_verdict_group =
+      [&bank, &cache, num_attempts_allowed, num_attempts_used, &best_strategy](
+          int verdict, const word_list& verdict_group,
+          candidate_info best_follow_up) -> void {
+    best_strategy.follow_ups_by_verdict[verdict] = find_best_strategy(
+        bank, cache, num_attempts_allowed, num_attempts_used + 1, verdict_group,
+        best_follow_up.guess);
+  };
+  evaluate_guess(bank, cache, num_attempts_allowed, num_attempts_used + 1,
+                 remaining_words, first_guess, callback_for_verdict_group);
+  return best_strategy;
 }
 
 #pragma endregion

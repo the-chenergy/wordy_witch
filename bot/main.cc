@@ -13,6 +13,8 @@ int main() {
                          wordy_witch::word_bank_guesses_inclusion::ALL_WORDS);
   std::vector<std::string> state = {
       "LEAST",
+      "-----",
+      "CRUMP",
   };
 
   static wordy_witch::word_list remaining_words;
@@ -183,10 +185,53 @@ int main() {
               << ")" << std::endl;
   };
 
+  auto find_and_display_best_strategy =
+      [](const wordy_witch::word_bank& bank, int num_attempts_used,
+         const wordy_witch::word_list& remaining_words,
+         std::optional<int> prev_guess) -> void {
+    wordy_witch::strategy strategy =
+        wordy_witch::find_best_strategy(
+            bank, bot_cache, wordy_witch::MAX_NUM_ATTEMPTS_ALLOWED,
+            num_attempts_used, remaining_words, prev_guess)
+            .value();
+
+    std::cout << "Best guess in every possible scenario:";
+    std::function<void(const wordy_witch::word_bank&, wordy_witch::strategy,
+                       int)>
+        display_strategy =
+            [&display_strategy](const wordy_witch::word_bank& bank,
+                                wordy_witch::strategy strategy,
+                                int indent_level) -> void {
+      if (indent_level > 0) {
+        std::cout << bank.words[strategy.guess];
+      }
+      for (int verdict = wordy_witch::NUM_VERDICTS; verdict >= 0; verdict--) {
+        if (strategy.follow_ups_by_verdict.count(verdict) == 0) {
+          continue;
+        }
+        std::cout << std::endl;
+        std::cout << std::string(indent_level, '\t')
+                  << bank.words[strategy.guess] << " "
+                  << wordy_witch::format_verdict(verdict) << " ";
+        display_strategy(bank, strategy.follow_ups_by_verdict[verdict].value(),
+                         indent_level + 1);
+      }
+    };
+    display_strategy(bank, strategy, 0);
+    std::cout << std::endl;
+  };
+
   if (state.size() % 2 == 0) {
     find_and_display_best_guess(bank, state.size() / 2, remaining_words);
   } else {
     find_and_display_best_guess_by_verdict(bank, state.size() / 2 + 1,
                                            remaining_words, state.back());
   }
+  std::cout << std::endl;
+
+  find_and_display_best_strategy(
+      bank, state.size() / 2, remaining_words,
+      state.size() % 2 == 0
+          ? std::nullopt
+          : std::optional{wordy_witch::find_word(bank, state.back()).value()});
 }
