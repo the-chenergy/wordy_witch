@@ -16,6 +16,9 @@ int main() {
   };
   wordy_witch::guess_cost_function get_guess_cost;
   get_guess_cost = wordy_witch::get_flat_guess_cost;
+  get_guess_cost = [](int num_attempts_used) -> double {
+    return num_attempts_used + (num_attempts_used >= 4) * 1E6;
+  };
 
   static wordy_witch::word_list remaining_words;
   remaining_words.num_words = bank.num_words;
@@ -256,11 +259,24 @@ int main() {
     std::cout << "Overall, the best strategy produces a mean of "
               << total_num_attempts_used * 1.0 / remaining_words.num_targets
               << " attempts per Wordle game (total attempts: "
-              << total_num_attempts_used << ", attempt distribution:";
+              << total_num_attempts_used
+              << ", attempt distribution:" << std::endl;
     for (int i = 1; i <= wordy_witch::MAX_NUM_ATTEMPTS_ALLOWED; i++) {
-      std::cout << " " << num_targets_solved_by_attempts_used[i];
+      if (i > 1) {
+        std::cout << "\t";
+      }
+      std::cout << num_targets_solved_by_attempts_used[i];
     }
-    std::cout << ")" << std::endl;
+    std::cout << std::endl;
+    std::cout << ", attempt distribution percentages:" << std::endl;
+    for (int i = 1; i <= wordy_witch::MAX_NUM_ATTEMPTS_ALLOWED; i++) {
+      if (i > 1) {
+        std::cout << "\t";
+      }
+      std::cout << num_targets_solved_by_attempts_used[i] * 100.0 /
+                       remaining_words.num_targets;
+    }
+    std::cout << std::endl;
   };
 
   std::optional<int> prev_guess;
