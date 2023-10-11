@@ -1,6 +1,6 @@
 __pycache__
 *.dSYM
-bot/output
+bot/demo/output
 
 .DS_Store
 *.o

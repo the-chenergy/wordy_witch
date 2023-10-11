@@ -4,13 +4,13 @@
 #include <optional>
 #include <vector>
 
-#include "bot.hh"
-#include "log.hh"
+#include "../bot.hh"
+#include "../log.hh"
 
 int main() {
   static wordy_witch::word_bank bank;
   wordy_witch::load_bank(
-      bank, "../bank/co_wordle",
+      bank, "../../bank/co_wordle",
       //  "./output/temp_bank",
       wordy_witch::word_bank_guesses_inclusion::TARGETS_ONLY);
   std::vector<std::string> state = {
