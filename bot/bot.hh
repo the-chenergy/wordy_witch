@@ -643,6 +643,9 @@ struct strategy {
   bool can_guess_be_target;
   int num_remaining_words;
   int num_remaining_targets;
+  double cost;
+  int total_num_attempts_used;
+  int num_targets_solved_by_attempts_used[MAX_NUM_ATTEMPTS_ALLOWED];
   std::unordered_map<int, std::optional<strategy>> follow_ups_by_verdict;
 };
 
@@ -654,10 +657,10 @@ std::optional<strategy> find_best_strategy(
   int first_guess;
   if (forced_first_guess.has_value()) {
     first_guess = forced_first_guess.value();
-    double cost =
+    double estimated_cost =
         evaluate_guess(bank, cache, num_attempts_allowed, num_attempts_used + 1,
                        remaining_words, first_guess, nullptr, get_guess_cost);
-    assert(cost < INFINITE_COST);
+    assert(estimated_cost < INFINITE_COST);
   } else {
     candidate_info best_guess =
         find_best_guess(bank, cache, num_attempts_allowed, num_attempts_used,
@@ -672,6 +675,7 @@ std::optional<strategy> find_best_strategy(
       .guess = first_guess,
       .num_remaining_words = remaining_words.num_words,
       .num_remaining_targets = remaining_words.num_targets,
+      .cost = get_guess_cost(num_attempts_used + 1),
   };
   int num_targets_seen = 0;
   auto record_best_follow_up_for_verdict_group =
@@ -680,9 +684,18 @@ std::optional<strategy> find_best_strategy(
        &num_targets_seen](int verdict, const word_list& verdict_group,
                           candidate_info best_follow_up) -> void {
     num_targets_seen += verdict_group.num_targets;
-    best_strategy.follow_ups_by_verdict[verdict] = find_best_strategy(
-        bank, cache, num_attempts_allowed, num_attempts_used + 1, verdict_group,
-        best_follow_up.guess, get_guess_cost);
+    strategy follow_up =
+        find_best_strategy(bank, cache, num_attempts_allowed,
+                           num_attempts_used + 1, verdict_group,
+                           best_follow_up.guess, get_guess_cost)
+            .value();
+    best_strategy.cost += follow_up.cost;
+    best_strategy.follow_ups_by_verdict[verdict] = follow_up;
+    best_strategy.total_num_attempts_used += follow_up.total_num_attempts_used;
+    for (int i = 0; i < MAX_NUM_ATTEMPTS_ALLOWED; i++) {
+      best_strategy.num_targets_solved_by_attempts_used[i] +=
+          follow_up.num_targets_solved_by_attempts_used[i];
+    }
   };
   evaluate_guess(bank, cache, num_attempts_allowed, num_attempts_used + 1,
                  remaining_words, first_guess,
@@ -690,6 +703,8 @@ std::optional<strategy> find_best_strategy(
 
   if (num_targets_seen == remaining_words.num_targets - 1) {
     best_strategy.can_guess_be_target = true;
+    best_strategy.total_num_attempts_used += num_attempts_used + 1;
+    best_strategy.num_targets_solved_by_attempts_used[num_attempts_used]++;
   }
   return best_strategy;
 }

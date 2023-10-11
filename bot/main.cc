@@ -9,16 +9,18 @@
 
 int main() {
   static wordy_witch::word_bank bank;
-  wordy_witch::load_bank(bank, "../bank/co_wordle",
-                         wordy_witch::word_bank_guesses_inclusion::ALL_WORDS);
+  wordy_witch::load_bank(
+      bank, "../bank/co_wordle",
+      //  "./output/temp_bank",
+      wordy_witch::word_bank_guesses_inclusion::TARGETS_ONLY);
   std::vector<std::string> state = {
-      "LEAST",
+      "TRAIN",
   };
   wordy_witch::guess_cost_function get_guess_cost;
   get_guess_cost = wordy_witch::get_flat_guess_cost;
-  get_guess_cost = [](int num_attempts_used) -> double {
-    return num_attempts_used + (num_attempts_used >= 4) * 1E6;
-  };
+  // get_guess_cost = [](int num_attempts_used) -> double {
+  //   return num_attempts_used + (num_attempts_used >= 4) * 1E6;
+  // };
 
   static wordy_witch::word_list remaining_words;
   remaining_words.num_words = bank.num_words;
@@ -217,23 +219,21 @@ int main() {
             num_attempts_used, remaining_words, prev_guess, get_guess_cost)
             .value();
 
-    int num_targets_solved_by_attempts_used
-        [wordy_witch::MAX_NUM_ATTEMPTS_ALLOWED + 1] = {};
-
-    std::cout << "Best guess in every possible scenario:";
+    std::cout << "Best guess after \"" << bank.words[strategy.guess]
+              << "\" in every possible scenario:";
     std::function<void(const wordy_witch::word_bank&, wordy_witch::strategy,
                        int)>
-        display_strategy = [&display_strategy, num_attempts_used,
-                            &num_targets_solved_by_attempts_used](
+        display_strategy = [&display_strategy, num_attempts_used](
                                const wordy_witch::word_bank& bank,
                                wordy_witch::strategy strategy,
                                int indent_level) -> void {
       if (indent_level > 0) {
-        std::cout << bank.words[strategy.guess];
-      }
-      if (strategy.can_guess_be_target) {
-        num_targets_solved_by_attempts_used[num_attempts_used + 1 +
-                                            indent_level]++;
+        std::cout << bank.words[strategy.guess]
+                  << "\t(GL:" << strategy.num_remaining_words
+                  << ", TL: " << strategy.num_remaining_targets << ", EA: "
+                  << strategy.total_num_attempts_used * 1.0 /
+                         strategy.num_remaining_targets
+                  << ")";
       }
       for (int verdict = wordy_witch::NUM_VERDICTS; verdict >= 0; verdict--) {
         if (strategy.follow_ups_by_verdict.count(verdict) == 0) {
@@ -251,29 +251,25 @@ int main() {
     std::cout << std::endl;
     std::cout << std::endl;
 
-    int total_num_attempts_used = 0;
-    for (int i = 1; i <= wordy_witch::MAX_NUM_ATTEMPTS_ALLOWED; i++) {
-      total_num_attempts_used += i * num_targets_solved_by_attempts_used[i];
-    }
-
     std::cout << "Overall, the best strategy produces a mean of "
-              << total_num_attempts_used * 1.0 / remaining_words.num_targets
+              << strategy.total_num_attempts_used * 1.0 /
+                     remaining_words.num_targets
               << " attempts per Wordle game (total attempts: "
-              << total_num_attempts_used
-              << ", attempt distribution:" << std::endl;
-    for (int i = 1; i <= wordy_witch::MAX_NUM_ATTEMPTS_ALLOWED; i++) {
-      if (i > 1) {
+              << strategy.total_num_attempts_used << ")" << std::endl;
+    std::cout << "Attempt distribution:" << std::endl;
+    for (int i = 0; i < wordy_witch::MAX_NUM_ATTEMPTS_ALLOWED; i++) {
+      if (i > 0) {
         std::cout << "\t";
       }
-      std::cout << num_targets_solved_by_attempts_used[i];
+      std::cout << strategy.num_targets_solved_by_attempts_used[i];
     }
     std::cout << std::endl;
-    std::cout << ", attempt distribution percentages:" << std::endl;
-    for (int i = 1; i <= wordy_witch::MAX_NUM_ATTEMPTS_ALLOWED; i++) {
-      if (i > 1) {
+    std::cout << "Attempt distribution percentages:" << std::endl;
+    for (int i = 0; i < wordy_witch::MAX_NUM_ATTEMPTS_ALLOWED; i++) {
+      if (i > 0) {
         std::cout << "\t";
       }
-      std::cout << num_targets_solved_by_attempts_used[i] * 100.0 /
+      std::cout << strategy.num_targets_solved_by_attempts_used[i] * 100.0 /
                        remaining_words.num_targets;
     }
     std::cout << std::endl;
