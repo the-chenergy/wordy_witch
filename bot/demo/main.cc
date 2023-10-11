@@ -9,12 +9,11 @@
 
 int main() {
   static wordy_witch::word_bank bank;
-  wordy_witch::load_bank(
-      bank, "../../bank/co_wordle",
-      //  "./output/temp_bank",
-      wordy_witch::word_bank_guesses_inclusion::TARGETS_ONLY);
+  wordy_witch::load_bank(bank, "../../bank/co_wordle",
+                         // "./output/temp_bank",
+                         wordy_witch::word_bank_guesses_inclusion::ALL_WORDS);
   std::vector<std::string> state = {
-      "TRAIN",
+      "LEAST",
   };
   wordy_witch::guess_cost_function get_guess_cost;
   get_guess_cost = wordy_witch::get_flat_guess_cost;

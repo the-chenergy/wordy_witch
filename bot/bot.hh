@@ -17,6 +17,7 @@
 #include <string>
 #include <tuple>
 #include <unordered_map>
+#include <vector>
 
 #include "log.hh"
 
@@ -101,6 +102,7 @@ struct word_bank {
   char words[MAX_BANK_SIZE][WORD_SIZE + 1];
   int num_words;
   int num_targets;
+  uint64_t hash;
 
   /* `verdict[guess][target]` => `judge(guess, target)` */
   uint8_t verdicts[MAX_BANK_SIZE][MAX_BANK_SIZE];
@@ -161,6 +163,18 @@ void load_bank(word_bank& out_bank, std::filesystem::path dict_path,
     }
   };
   read_bank(out_bank, dict_path, guesses_inclusion);
+
+  auto compute_bank_hash = [](word_bank& bank) -> void {
+    bank.hash = bank.num_targets;
+    std::vector<std::string> words(bank.words, bank.words + bank.num_words);
+    std::sort(words.begin(), words.begin() + bank.num_targets);
+    std::sort(words.begin() + bank.num_targets, words.begin() + bank.num_words);
+    for (const std::string& word : words) {
+      bank.hash *= 31;
+      bank.hash += std::hash<std::string>()(word);
+    }
+  };
+  compute_bank_hash(out_bank);
 
   auto transform_bank_words_to_upper = [](word_bank& bank) -> void {
     for (int i = 0; i < bank.num_words; i++) {
@@ -279,16 +293,6 @@ struct candidate_info {
 static constexpr int NUM_CODES_IN_GROUP_HASH = 2;
 using word_list_hash = std::array<uint64_t, NUM_CODES_IN_GROUP_HASH>;
 
-struct word_list_hash_unordered_map_hasher {
-  uint64_t operator()(word_list_hash word_list_hash) const {
-    uint64_t combined_hash = 0;
-    for (uint64_t code : word_list_hash) {
-      combined_hash = combined_hash * 31 + code;
-    }
-    return combined_hash;
-  }
-};
-
 static word_list_hash hash_word_list(const word_list& list) {
   static constexpr uint64_t MOD[] = {(1ULL << 63) - 25, (1ULL << 63) - 165};
 
@@ -316,19 +320,59 @@ static word_list_hash hash_word_list(const word_list& list) {
   return hash;
 };
 
-using find_best_guess_by_word_list_cache =
-    std::unordered_map<word_list_hash, candidate_info,
-                       word_list_hash_unordered_map_hasher>;
-
-struct bot_cache {
-  find_best_guess_by_word_list_cache
-      find_best_guess_cache_by_attempts_allowed_and_used
-          [MAX_NUM_ATTEMPTS_ALLOWED][MAX_NUM_ATTEMPTS_ALLOWED];
-};
-
 using guess_cost_function = std::function<double(int num_attempts_used)>;
 
 double get_flat_guess_cost(int num_attempts_used) { return num_attempts_used; }
+
+template <typename return_type, typename... args_type>
+static uint64_t get_function_address(
+    std::function<return_type(args_type...)> f) {
+  using function_type = return_type(args_type...);
+  function_type* pointer = f.template target<function_type>();
+  return reinterpret_cast<uint64_t>(pointer);
+}
+
+struct find_best_guess_cache_key {
+  uint64_t bank_hash;
+  word_list_hash remaining_words_hash;
+  guess_cost_function get_guess_cost;
+
+  bool operator==(const find_best_guess_cache_key& other) const {
+    auto l = std::tuple{
+        bank_hash,
+        remaining_words_hash,
+        get_function_address(get_guess_cost),
+    };
+    auto r = std::tuple{
+        other.bank_hash,
+        other.remaining_words_hash,
+        get_function_address(other.get_guess_cost),
+    };
+    return l == r;
+  }
+};
+
+struct find_best_guess_cache_key_hasher {
+  uint64_t operator()(find_best_guess_cache_key key) const {
+    uint64_t combined_hash = key.bank_hash;
+    for (uint64_t code : key.remaining_words_hash) {
+      combined_hash = combined_hash * 31 + code;
+    }
+    uint64_t get_guess_cost_address = get_function_address(key.get_guess_cost);
+    combined_hash =
+        combined_hash * 31 + std::hash<uint64_t>{}(get_guess_cost_address);
+    return combined_hash;
+  }
+};
+
+using find_best_guess_cache =
+    std::unordered_map<find_best_guess_cache_key, candidate_info,
+                       find_best_guess_cache_key_hasher>;
+
+struct bot_cache {
+  find_best_guess_cache find_best_guess_cache_by_attempts_allowed_and_used
+      [MAX_NUM_ATTEMPTS_ALLOWED][MAX_NUM_ATTEMPTS_ALLOWED];
+};
 
 using find_best_guess_callback_for_candidate =
     std::function<void(candidate_info candidate)>;
@@ -471,11 +515,15 @@ candidate_info find_best_guess(
   }
 
   word_list_hash remaining_words_hash = hash_word_list(remaining_words);
-  find_best_guess_by_word_list_cache& result_cache =
+  find_best_guess_cache_key cache_key = {
+      .bank_hash = bank.hash,
+      .remaining_words_hash = remaining_words_hash,
+      .get_guess_cost = get_guess_cost,
+  };
+  find_best_guess_cache& result_cache =
       cache.find_best_guess_cache_by_attempts_allowed_and_used
           [num_attempts_allowed - 1][num_attempts_used];
-  if (auto it = result_cache.find(remaining_words_hash);
-      it != result_cache.end()) {
+  if (auto it = result_cache.find(cache_key); it != result_cache.end()) {
     return it->second;
   }
 
@@ -634,7 +682,7 @@ candidate_info find_best_guess(
     }
   }
 
-  result_cache[remaining_words_hash] = best_guess;
+  result_cache[cache_key] = best_guess;
   return best_guess;
 }
 
