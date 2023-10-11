@@ -4,7 +4,6 @@
 #include <array>
 #include <bit>
 #include <bitset>
-#include <cassert>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
@@ -358,9 +357,8 @@ struct find_best_guess_cache_key_hasher {
     for (uint64_t code : key.remaining_words_hash) {
       combined_hash = combined_hash * 31 + code;
     }
-    uint64_t get_guess_cost_address = get_function_address(key.get_guess_cost);
     combined_hash =
-        combined_hash * 31 + std::hash<uint64_t>{}(get_guess_cost_address);
+        combined_hash * 31 + get_function_address(key.get_guess_cost);
     return combined_hash;
   }
 };
@@ -708,7 +706,9 @@ std::optional<strategy> find_best_strategy(
     double estimated_cost =
         evaluate_guess(bank, cache, num_attempts_allowed, num_attempts_used + 1,
                        remaining_words, first_guess, nullptr, get_guess_cost);
-    assert(estimated_cost < INFINITE_COST);
+    if (estimated_cost >= INFINITE_COST) {
+      return std::nullopt;
+    }
   } else {
     candidate_info best_guess =
         find_best_guess(bank, cache, num_attempts_allowed, num_attempts_used,
