@@ -41,12 +41,15 @@ int main() {
   read_bank(bank, "../../bank/co_wordle_unlimited", "all");
 
   std::vector<std::string> state = {
-      "LEAST",
+      "CRATE",
   };
   wordy_witch::guess_cost_function get_guess_cost;
   get_guess_cost = wordy_witch::get_flat_guess_cost;
   get_guess_cost = [](int num_attempts_used) -> double {
     return num_attempts_used + (num_attempts_used >= 4) * 1E6;
+  };
+  wordy_witch::candidate_pruning_policy pruning_policy = {
+      .max_entropy_place_to_consider = 128,
   };
 
   static wordy_witch::word_list remaining_words;
@@ -91,7 +94,8 @@ int main() {
   auto find_and_display_best_guess =
       [](const wordy_witch::word_bank& bank, wordy_witch::bot_cache& cache,
          int num_attempts_used, const wordy_witch::word_list& remaining_words,
-         wordy_witch::guess_cost_function get_guess_cost) -> void {
+         wordy_witch::guess_cost_function get_guess_cost,
+         wordy_witch::candidate_pruning_policy pruning_policy) -> void {
     std::cout << "Candidate best guesses in this board state:" << std::endl;
     std::cout << "(Guess: a candidate best guess in this board state, after "
                  "basic pruning by entropy)"
@@ -158,7 +162,8 @@ int main() {
     };
     wordy_witch::candidate_info best_guess = wordy_witch::find_best_guess(
         bank, cache, wordy_witch::MAX_NUM_ATTEMPTS_ALLOWED, num_attempts_used,
-        remaining_words, display_candidate_info, get_guess_cost);
+        remaining_words, display_candidate_info, get_guess_cost,
+        pruning_policy);
     std::cout << std::endl;
 
     std::cout << "Best guess in the input board state: "
@@ -174,7 +179,8 @@ int main() {
       [](const wordy_witch::word_bank& bank, wordy_witch::bot_cache& cache,
          int num_attempts_used, const wordy_witch::word_list& remaining_words,
          const std::string& prev_guess,
-         wordy_witch::guess_cost_function get_guess_cost) -> void {
+         wordy_witch::guess_cost_function get_guess_cost,
+         wordy_witch::candidate_pruning_policy pruning_policy) -> void {
     std::cout << "Best guesses in this board state for each possible verdict:"
               << std::endl;
     std::cout << "(VID: a base-3 encoded number of this verdict)" << std::endl;
@@ -229,7 +235,7 @@ int main() {
     double cost = wordy_witch::evaluate_guess(
         bank, cache, wordy_witch::MAX_NUM_ATTEMPTS_ALLOWED, num_attempts_used,
         remaining_words, guess, display_best_guess_for_verdict_group,
-        get_guess_cost);
+        get_guess_cost, pruning_policy);
     std::cout << std::endl;
 
     wordy_witch::guess_heuristic heuristic =
@@ -247,11 +253,12 @@ int main() {
 
   if (state.size() % 2 == 0) {
     find_and_display_best_guess(bank, bot_cache, state.size() / 2,
-                                remaining_words, get_guess_cost);
+                                remaining_words, get_guess_cost,
+                                pruning_policy);
   } else {
     find_and_display_best_guess_by_verdict(
         bank, bot_cache, state.size() / 2 + 1, remaining_words, state.back(),
-        get_guess_cost);
+        get_guess_cost, pruning_policy);
   }
   std::cout << std::endl;
 
@@ -259,11 +266,13 @@ int main() {
       [](const wordy_witch::word_bank& bank, int num_attempts_used,
          const wordy_witch::word_list& remaining_words,
          std::optional<int> prev_guess,
-         wordy_witch::guess_cost_function get_guess_cost) -> void {
+         wordy_witch::guess_cost_function get_guess_cost,
+         wordy_witch::candidate_pruning_policy pruning_policy) -> void {
     wordy_witch::strategy strategy =
         wordy_witch::find_best_strategy(
             bank, bot_cache, wordy_witch::MAX_NUM_ATTEMPTS_ALLOWED,
-            num_attempts_used, remaining_words, prev_guess, get_guess_cost)
+            num_attempts_used, remaining_words, prev_guess, get_guess_cost,
+            pruning_policy)
             .value();
 
     std::cout << "Best guess after \"" << bank.words[strategy.guess]
@@ -328,5 +337,5 @@ int main() {
     prev_guess = wordy_witch::find_word(bank, state.back()).value();
   }
   find_and_display_best_strategy(bank, state.size() / 2, remaining_words,
-                                 prev_guess, get_guess_cost);
+                                 prev_guess, get_guess_cost, pruning_policy);
 }
