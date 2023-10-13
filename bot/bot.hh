@@ -112,12 +112,6 @@ struct word_bank {
                                                       [NUM_VERDICTS];
 };
 
-enum struct word_bank_guesses_inclusion : int {
-  TARGETS_ONLY,
-  COMMON_WORDS,
-  ALL_WORDS,
-};
-
 void load_bank(word_bank& out_bank, const std::vector<std::string>& words,
                int num_targets) {
   out_bank.num_words = words.size();

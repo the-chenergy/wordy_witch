@@ -10,9 +10,13 @@
 #include "../log.hh"
 
 int main() {
-  auto read_bank =
-      [](wordy_witch::word_bank& out_bank, std::filesystem::path dict_path,
-         wordy_witch::word_bank_guesses_inclusion guesses_inclusion) -> void {
+  auto read_bank = [](wordy_witch::word_bank& out_bank,
+                      std::filesystem::path dict_path,
+                      const std::string& guesses_inclusion) -> void {
+    constexpr char INCLUDE_TARGETS_ONLY[] = "targets";
+    constexpr char INCLUDE_COMMON_WORDS_ONLY[] = "common";
+    constexpr char INCLUDE_ALL_WORDS[] = "all";
+
     auto read_and_append_words =
         [](std::vector<std::string>& words,
            std::filesystem::path word_list_path) -> void {
@@ -25,19 +29,16 @@ int main() {
     std::vector<std::string> words;
     read_and_append_words(words, dict_path / "targets.txt");
     int num_targets = words.size();
-    if (guesses_inclusion !=
-        wordy_witch::word_bank_guesses_inclusion::TARGETS_ONLY) {
+    if (guesses_inclusion != INCLUDE_TARGETS_ONLY) {
       read_and_append_words(words, dict_path / "common_guesses.txt");
-      if (guesses_inclusion ==
-          wordy_witch::word_bank_guesses_inclusion::ALL_WORDS) {
+      if (guesses_inclusion == INCLUDE_ALL_WORDS) {
         read_and_append_words(words, dict_path / "uncommon_guesses.txt");
       }
     }
     wordy_witch::load_bank(out_bank, words, num_targets);
   };
   static wordy_witch::word_bank bank;
-  read_bank(bank, "../../bank/co_wordle_unlimited",
-            wordy_witch::word_bank_guesses_inclusion::ALL_WORDS);
+  read_bank(bank, "../../bank/co_wordle_unlimited", "all");
 
   std::vector<std::string> state = {
       "LEAST",
