@@ -1,3 +1,5 @@
+#include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <numeric>
@@ -8,9 +10,35 @@
 #include "../log.hh"
 
 int main() {
+  auto read_bank =
+      [](wordy_witch::word_bank& out_bank, std::filesystem::path dict_path,
+         wordy_witch::word_bank_guesses_inclusion guesses_inclusion) -> void {
+    auto read_and_append_words =
+        [](std::vector<std::string>& words,
+           std::filesystem::path word_list_path) -> void {
+      std::ifstream file(word_list_path);
+      for (std::string word; file >> word;) {
+        words.push_back(word);
+      }
+    };
+
+    std::vector<std::string> words;
+    read_and_append_words(words, dict_path / "targets.txt");
+    int num_targets = words.size();
+    if (guesses_inclusion !=
+        wordy_witch::word_bank_guesses_inclusion::TARGETS_ONLY) {
+      read_and_append_words(words, dict_path / "common_guesses.txt");
+      if (guesses_inclusion ==
+          wordy_witch::word_bank_guesses_inclusion::ALL_WORDS) {
+        read_and_append_words(words, dict_path / "uncommon_guesses.txt");
+      }
+    }
+    wordy_witch::load_bank(out_bank, words, num_targets);
+  };
   static wordy_witch::word_bank bank;
-  wordy_witch::load_bank(bank, "../../bank/co_wordle_unlimited",
-                         wordy_witch::word_bank_guesses_inclusion::ALL_WORDS);
+  read_bank(bank, "../../bank/co_wordle_unlimited",
+            wordy_witch::word_bank_guesses_inclusion::ALL_WORDS);
+
   std::vector<std::string> state = {
       "LEAST",
   };

@@ -7,10 +7,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdint>
-#include <filesystem>
-#include <fstream>
 #include <functional>
-#include <iostream>
 #include <numeric>
 #include <optional>
 #include <string>
@@ -121,47 +118,22 @@ enum struct word_bank_guesses_inclusion : int {
   ALL_WORDS,
 };
 
-void load_bank(word_bank& out_bank, std::filesystem::path dict_path,
-               word_bank_guesses_inclusion guesses_inclusion) {
-  auto read_bank = [](word_bank& out_bank, std::filesystem::path dict_path,
-                      word_bank_guesses_inclusion guesses_inclusion) -> void {
-    out_bank.num_words = 0;
-    out_bank.num_targets = 0;
-    std::ifstream target_file(dict_path / "targets.txt");
-    while (true) {
-      target_file >> out_bank.words[out_bank.num_words];
-      if (target_file.fail()) {
-        break;
-      }
-      out_bank.num_words++;
-      out_bank.num_targets++;
-    }
+void load_bank(word_bank& out_bank, const std::vector<std::string>& words,
+               int num_targets) {
+  out_bank.num_words = words.size();
+  out_bank.num_targets = num_targets;
+  for (int i = 0; i < words.size(); i++) {
+    std::copy_n(words.at(i).begin(), WORD_SIZE, out_bank.words[i]);
+  }
 
-    if (guesses_inclusion == word_bank_guesses_inclusion::TARGETS_ONLY) {
-      return;
-    }
-    std::ifstream common_guesses_file(dict_path / "common_guesses.txt");
-    while (true) {
-      common_guesses_file >> out_bank.words[out_bank.num_words];
-      if (common_guesses_file.fail()) {
-        break;
+  auto transform_bank_words_to_upper = [](word_bank& bank) -> void {
+    for (int i = 0; i < bank.num_words; i++) {
+      for (int j = 0; j < WORD_SIZE; j++) {
+        bank.words[i][j] = std::toupper(bank.words[i][j]);
       }
-      out_bank.num_words++;
-    }
-
-    if (guesses_inclusion != word_bank_guesses_inclusion::ALL_WORDS) {
-      return;
-    }
-    std::ifstream uncommon_guesses_file(dict_path / "uncommon_guesses.txt");
-    while (true) {
-      uncommon_guesses_file >> out_bank.words[out_bank.num_words];
-      if (uncommon_guesses_file.fail()) {
-        break;
-      }
-      out_bank.num_words++;
     }
   };
-  read_bank(out_bank, dict_path, guesses_inclusion);
+  transform_bank_words_to_upper(out_bank);
 
   auto compute_bank_hash = [](word_bank& bank) -> void {
     bank.hash = bank.num_targets;
@@ -174,15 +146,6 @@ void load_bank(word_bank& out_bank, std::filesystem::path dict_path,
     }
   };
   compute_bank_hash(out_bank);
-
-  auto transform_bank_words_to_upper = [](word_bank& bank) -> void {
-    for (int i = 0; i < bank.num_words; i++) {
-      for (int j = 0; j < WORD_SIZE; j++) {
-        bank.words[i][j] = std::toupper(bank.words[i][j]);
-      }
-    }
-  };
-  transform_bank_words_to_upper(out_bank);
 
   auto precompute_judge_data = [](word_bank& bank) -> void {
     for (int i = 0; i < bank.num_words; i++) {
