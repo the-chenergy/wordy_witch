@@ -1,0 +1,5 @@
+{
+  "code-runner.executorMapByGlob": {
+    "(makefile|*.cc)": "true $fileNameWithoutExt; make"
+  }
+}
