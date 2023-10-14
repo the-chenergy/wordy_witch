@@ -23,31 +23,26 @@ namespace wordy_witch {
 
 constexpr int WORD_SIZE = 5;
 
-static constexpr int ALPHABET_SIZE = 1 << 7;
 static constexpr int VERDICT_VALUE_BLACK = 0;
 static constexpr int VERDICT_VALUE_YELLOW = 1;
 static constexpr int VERDICT_VALUE_GREEN = 2;
 
-int judge(const char* guess, const char* target) {
-  int target_letter_counts[ALPHABET_SIZE] = {};
-  int verdict_tiles[WORD_SIZE] = {};
-  for (int i = 0; i < WORD_SIZE; i++) {
-    if (guess[i] == target[i]) {
-      verdict_tiles[i] = VERDICT_VALUE_GREEN;
-    } else {
-      target_letter_counts[target[i]]++;
-    }
-  }
-  for (int i = 0; i < WORD_SIZE; i++) {
-    if (guess[i] != target[i] && target_letter_counts[guess[i]] > 0) {
-      verdict_tiles[i] = VERDICT_VALUE_YELLOW;
-      target_letter_counts[guess[i]]--;
-    }
-  }
+constexpr int NUM_VERDICTS = 243;
 
+static int judge(const char* guess, const char* target) {
+  int target_letter_counts[32] = {};
   int verdict = 0;
-  for (int i = 0; i < WORD_SIZE; i++) {
-    verdict = verdict * 3 + verdict_tiles[i];
+  for (int i = 0, t = VERDICT_VALUE_GREEN * NUM_VERDICTS / 3; i < WORD_SIZE;
+       i++, t /= 3) {
+    int x = guess[i] == target[i];
+    verdict += x * t;
+    target_letter_counts[target[i] & 31] += !x;
+  }
+  for (int i = 0, t = VERDICT_VALUE_YELLOW * NUM_VERDICTS / 3; i < WORD_SIZE;
+       i++, t /= 3) {
+    int x = guess[i] != target[i] & target_letter_counts[guess[i] & 31] > 0;
+    verdict += x * t;
+    target_letter_counts[guess[i] & 31] -= x;
   }
   return verdict;
 }
@@ -63,28 +58,33 @@ std::string format_verdict(int verdict) {
   return tiles;
 }
 
-bool check_is_hard_mode_valid(const char* prev_guess, int prev_verdict,
-                              const char* candidate_guess) {
-  int verdict_tiles[WORD_SIZE];
-  for (int i = WORD_SIZE - 1; i >= 0; i--) {
-    verdict_tiles[i] = prev_verdict % 3;
-    prev_verdict /= 3;
-  }
-
-  int letter_counts[ALPHABET_SIZE] = {};
-  for (int i = 0; i < WORD_SIZE; i++) {
-    if (verdict_tiles[i] != VERDICT_VALUE_BLACK) {
-      letter_counts[prev_guess[i]]++;
-      if (verdict_tiles[i] == VERDICT_VALUE_GREEN) {
-        if (candidate_guess[i] != prev_guess[i]) {
-          return false;
-        }
+static bool check_is_hard_mode_valid(const char* prev_guess, int prev_verdict,
+                                     const char* candidate_guess) {
+  static int VERDICT_TILES_BY_VERDICT[NUM_VERDICTS][WORD_SIZE];
+  static const int precompute_verdict_tiles_by_verdict = []() -> int {
+    for (int verdict = 0; verdict < NUM_VERDICTS; verdict++) {
+      for (int i = WORD_SIZE - 1, v = verdict; i >= 0; i--, v /= 3) {
+        VERDICT_TILES_BY_VERDICT[verdict][i] = v % 3;
       }
     }
-    letter_counts[candidate_guess[i]]--;
+    return 0;
+  }();
+
+  const int* verdict_tiles = VERDICT_TILES_BY_VERDICT[prev_verdict];
+  for (int i = 0; i < WORD_SIZE; i++) {
+    if (verdict_tiles[i] == VERDICT_VALUE_GREEN &&
+        candidate_guess[i] != prev_guess[i]) {
+      return false;
+    }
+  }
+  int letter_counts[32] = {};
+  for (int i = 0; i < WORD_SIZE; i++) {
+    letter_counts[candidate_guess[i] & 31]++;
   }
   for (int i = 0; i < WORD_SIZE; i++) {
-    if (letter_counts[prev_guess[i]] > 0) {
+    letter_counts[prev_guess[i] & 31] -=
+        verdict_tiles[i] != VERDICT_VALUE_BLACK;
+    if (letter_counts[prev_guess[i] & 31] == -1) {
       return false;
     }
   }
@@ -92,7 +92,6 @@ bool check_is_hard_mode_valid(const char* prev_guess, int prev_verdict,
 }
 
 constexpr int MAX_BANK_SIZE = 1 << 14;
-constexpr int NUM_VERDICTS = 243;
 
 struct word_bank {
   char words[MAX_BANK_SIZE][WORD_SIZE + 1];
@@ -146,23 +145,24 @@ void load_bank(word_bank& out_bank, const std::vector<std::string>& words,
       if (std::has_single_bit(static_cast<unsigned>(i))) {
         WORDY_WITCH_TRACE("Precomputing judge data", i, bank.num_words);
       }
-      std::optional<int> sample_next_guesses[NUM_VERDICTS] = {};
+      int sample_next_guesses[NUM_VERDICTS];
+      std::fill_n(sample_next_guesses, NUM_VERDICTS, -1);
       for (int j = 0; j < bank.num_words; j++) {
         int verdict = judge(bank.words[i], bank.words[j]);
         bank.verdicts[i][j] = verdict;
         sample_next_guesses[verdict] = j;
       }
       for (int prev_verdict = 0; prev_verdict < NUM_VERDICTS; prev_verdict++) {
-        if (!sample_next_guesses[prev_verdict].has_value()) {
+        if (sample_next_guesses[prev_verdict] == -1) {
           continue;
         }
         for (int candidate_verdict = 0; candidate_verdict < NUM_VERDICTS;
              candidate_verdict++) {
-          if (!sample_next_guesses[candidate_verdict].has_value()) {
+          if (sample_next_guesses[candidate_verdict] == -1) {
             continue;
           }
           char* candidate_guess =
-              bank.words[sample_next_guesses[candidate_verdict].value()];
+              bank.words[sample_next_guesses[candidate_verdict]];
           int valid = check_is_hard_mode_valid(bank.words[i], prev_verdict,
                                                candidate_guess);
           bank.hard_mode_valid_candidates[i][prev_verdict][candidate_verdict] =

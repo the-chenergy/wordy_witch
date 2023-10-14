@@ -38,7 +38,7 @@ int main() {
     wordy_witch::load_bank(out_bank, words, num_targets);
   };
   static wordy_witch::word_bank bank;
-  read_bank(bank, "../../bank/co_wordle", "all");
+  read_bank(bank, "../../bank/co_wordle_unlimited", "all");
 
   std::vector<std::string> state = {
       "LEAST",
@@ -49,8 +49,9 @@ int main() {
     return num_attempts_used + (num_attempts_used >= 4) * 1E6;
   };
   wordy_witch::candidate_pruning_policy pruning_policy = {
-      .max_entropy_place_to_consider = 32,
+      .max_entropy_place_to_consider = 8,
   };
+  WORDY_WITCH_TRACE("Done bank loading");
 
   static wordy_witch::word_list remaining_words;
   remaining_words.num_words = bank.num_words;
