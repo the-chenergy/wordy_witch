@@ -8,7 +8,8 @@
 		-s EXPORT_NAME='createModule' \
 		-o ./build/wordyWitchBot.mjs \
 		./js_api.cc
-	mv ./build/wordyWitchBot.wasm ./build/wordyWitchBot.mjs ../../web_client/src/library
+	mkdir -p ../../web_client/src/library
+	cp ./build/wordyWitchBot.wasm ./build/wordyWitchBot.mjs ../../web_client/src/library
 
 all: ./build/wordyWitchBot.wasm
 
