@@ -38,10 +38,10 @@ int main() {
     wordy_witch::load_bank(out_bank, words, num_targets);
   };
   static wordy_witch::word_bank bank;
-  read_bank(bank, "../../bank/co_wordle_unlimited", "all");
+  read_bank(bank, "../../bank/co_wordle", "all");
 
   std::vector<std::string> state = {
-      "CRATE",
+      "LEAST",
   };
   wordy_witch::guess_cost_function get_guess_cost;
   get_guess_cost = wordy_witch::get_flat_guess_cost;
@@ -49,7 +49,7 @@ int main() {
     return num_attempts_used + (num_attempts_used >= 4) * 1E6;
   };
   wordy_witch::candidate_pruning_policy pruning_policy = {
-      .max_entropy_place_to_consider = 128,
+      .max_entropy_place_to_consider = 32,
   };
 
   static wordy_witch::word_list remaining_words;

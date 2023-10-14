@@ -143,7 +143,7 @@ void load_bank(word_bank& out_bank, const std::vector<std::string>& words,
 
   auto precompute_judge_data = [](word_bank& bank) -> void {
     for (int i = 0; i < bank.num_words; i++) {
-      if (std::popcount(static_cast<unsigned>(i)) == 1) {
+      if (std::has_single_bit(static_cast<unsigned>(i))) {
         WORDY_WITCH_TRACE("Precomputing judge data", i, bank.num_words);
       }
       std::optional<int> sample_next_guesses[NUM_VERDICTS] = {};
@@ -292,17 +292,20 @@ struct find_best_guess_cache_key {
   uint64_t bank_hash;
   word_list_hash remaining_words_hash;
   guess_cost_function get_guess_cost;
+  int max_entropy_place_to_consider_pruning;
 
   bool operator==(const find_best_guess_cache_key& other) const {
     auto l = std::tuple{
         bank_hash,
         remaining_words_hash,
         get_function_address(get_guess_cost),
+        max_entropy_place_to_consider_pruning,
     };
     auto r = std::tuple{
         other.bank_hash,
         other.remaining_words_hash,
         get_function_address(other.get_guess_cost),
+        other.max_entropy_place_to_consider_pruning,
     };
     return l == r;
   }
@@ -316,6 +319,8 @@ struct find_best_guess_cache_key_hasher {
     }
     combined_hash =
         combined_hash * 31 + get_function_address(key.get_guess_cost);
+    combined_hash =
+        combined_hash * 31 + key.max_entropy_place_to_consider_pruning;
     return combined_hash;
   }
 };
@@ -488,7 +493,14 @@ candidate_info find_best_guess(
       .bank_hash = bank.hash,
       .remaining_words_hash = remaining_words_hash,
       .get_guess_cost = get_guess_cost,
-  };
+      .max_entropy_place_to_consider_pruning =
+          num_attempts_used == 0 &&
+                  pruning_policy
+                      .max_entropy_place_to_consider_for_initial_attempt
+                      .has_value()
+              ? pruning_policy.max_entropy_place_to_consider_for_initial_attempt
+                    .value()
+              : pruning_policy.max_entropy_place_to_consider};
   find_best_guess_cache& result_cache =
       cache.find_best_guess_cache_by_attempts_allowed_and_used
           [num_attempts_allowed - 1][num_attempts_used];
@@ -511,7 +523,8 @@ candidate_info find_best_guess(
               .value();
     } else if (num_attempts_used <=
                MAX_NUM_ATTEMPTS_USED_TO_PRUNE_BY_TWO_ATTEMPT_ENTROPY) {
-      max_entropy_place_to_consider /= 2;
+      max_entropy_place_to_consider =
+          std::max(max_entropy_place_to_consider / 2, 1);
     }
     double max_entropy_difference_to_consider = 1.0;
 
@@ -643,9 +656,9 @@ candidate_info find_best_guess(
   };
   for (int i = 0; i < candidates.num_words; i++) {
     int guess = candidates.words[i];
-    double cost =
-        evaluate_guess(bank, cache, num_attempts_allowed, num_attempts_used + 1,
-                       remaining_words, guess, {}, get_guess_cost);
+    double cost = evaluate_guess(bank, cache, num_attempts_allowed,
+                                 num_attempts_used + 1, remaining_words, guess,
+                                 {}, get_guess_cost, pruning_policy);
     if (callback_for_candidate) {
       callback_for_candidate(candidate_info{
           .guess = guess,
@@ -685,9 +698,9 @@ std::optional<strategy> find_best_strategy(
   int first_guess;
   if (forced_first_guess.has_value()) {
     first_guess = forced_first_guess.value();
-    double estimated_cost =
-        evaluate_guess(bank, cache, num_attempts_allowed, num_attempts_used + 1,
-                       remaining_words, first_guess, nullptr, get_guess_cost);
+    double estimated_cost = evaluate_guess(
+        bank, cache, num_attempts_allowed, num_attempts_used + 1,
+        remaining_words, first_guess, nullptr, get_guess_cost, pruning_policy);
     if (estimated_cost >= INFINITE_COST) {
       return std::nullopt;
     }
@@ -709,15 +722,15 @@ std::optional<strategy> find_best_strategy(
   };
   int num_targets_seen = 0;
   auto record_best_follow_up_for_verdict_group =
-      [&bank, &cache, num_attempts_allowed, num_attempts_used, &get_guess_cost,
-       &best_strategy,
-       &num_targets_seen](int verdict, const word_list& verdict_group,
-                          candidate_info best_follow_up) -> void {
+      [&bank, &cache, num_attempts_allowed, num_attempts_used, get_guess_cost,
+       &best_strategy, &num_targets_seen,
+       pruning_policy](int verdict, const word_list& verdict_group,
+                       candidate_info best_follow_up) -> void {
     num_targets_seen += verdict_group.num_targets;
     strategy follow_up =
         find_best_strategy(bank, cache, num_attempts_allowed,
                            num_attempts_used + 1, verdict_group,
-                           best_follow_up.guess, get_guess_cost)
+                           best_follow_up.guess, get_guess_cost, pruning_policy)
             .value();
     best_strategy.cost += follow_up.cost;
     best_strategy.follow_ups_by_verdict[verdict] = follow_up;
@@ -729,7 +742,8 @@ std::optional<strategy> find_best_strategy(
   };
   evaluate_guess(bank, cache, num_attempts_allowed, num_attempts_used + 1,
                  remaining_words, first_guess,
-                 record_best_follow_up_for_verdict_group, get_guess_cost);
+                 record_best_follow_up_for_verdict_group, get_guess_cost,
+                 pruning_policy);
 
   if (num_targets_seen == remaining_words.num_targets - 1) {
     best_strategy.can_guess_be_target = true;
