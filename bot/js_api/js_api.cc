@@ -16,7 +16,7 @@ void load_bank(const std::vector<std::string>& words, int num_targets) {
 }
 
 EMSCRIPTEN_BINDINGS() {
-  emscripten::function("load_bank", &load_bank);
+  emscripten::register_vector<std::string>("StringVector");
 
-  emscripten::register_vector<std::string>("vector_string");
+  emscripten::function("loadBank", &load_bank);
 }

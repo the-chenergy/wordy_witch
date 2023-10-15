@@ -1,4 +1,4 @@
-export interface vector_string {
+export interface StringVector {
   size(): number;
   push_back(_0: ArrayBuffer|Uint8Array|Uint8ClampedArray|Int8Array|string): void;
   resize(_0: number, _1: ArrayBuffer|Uint8Array|Uint8ClampedArray|Int8Array|string): void;
@@ -8,6 +8,6 @@ export interface vector_string {
 }
 
 export interface MainModule {
-  vector_string: {new(): vector_string};
-  load_bank(_0: vector_string, _1: number): void;
+  StringVector: {new(): StringVector};
+  loadBank(_0: StringVector, _1: number): void;
 }
