@@ -38,7 +38,10 @@ int main() {
     wordy_witch::load_bank(out_bank, words, num_targets);
   };
   static wordy_witch::word_bank bank;
-  read_bank(bank, "../../bank/co_wordle_unlimited", "all");
+  read_bank(bank,
+            "../../bank/co_wordle_unlimited",  //
+            // "./output/temp_bank_c_ghaut_tapes_pryer",  //
+            "common");
 
   std::vector<std::string> state = {
       "LEAST",
@@ -49,7 +52,7 @@ int main() {
     return num_attempts_used + (num_attempts_used >= 4) * 1E6;
   };
   wordy_witch::candidate_pruning_policy pruning_policy = {
-      .max_entropy_place_to_consider = 8,
+      .max_entropy_place_to_consider = 64,
   };
   WORDY_WITCH_TRACE("Done bank loading");
 
@@ -286,7 +289,7 @@ int main() {
                                int indent_level) -> void {
       if (indent_level > 0) {
         std::cout << bank.words[strategy.guess]
-                  << "\t(GL:" << strategy.num_remaining_words
+                  << "\t(GL: " << strategy.num_remaining_words
                   << ", TL: " << strategy.num_remaining_targets << ", EA: "
                   << strategy.total_num_attempts_used * 1.0 /
                          strategy.num_remaining_targets
