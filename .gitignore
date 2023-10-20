@@ -1,0 +1,7 @@
+__pycache__
+*.dSYM
+bot/demo/output
+
+.DS_Store
+*.o
+*.out

@@ -1,3 +1,6 @@
 {
-  "cSpell.words": ["dordle", "wordle"]
+  "cSpell.words": ["dordle", "endregion", "pbds", "wordle"],
+  "code-runner.executorMapByGlob": {
+    "*.cc|*.hh": "true $fileNameWithoutExt; g++-13 -O3 -std=c++20 *.cc && ./a.out | tee output/temp.txt"
+  }
 }

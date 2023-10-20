@@ -1,0 +1,7 @@
+---
+Language: Cpp
+BasedOnStyle: Google
+AlignTrailingComments: false
+AllowShortIfStatementsOnASingleLine: AllIfsAndElse
+IndentPPDirectives: AfterHash
+PointerAlignment: Left
